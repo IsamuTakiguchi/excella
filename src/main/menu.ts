@@ -46,6 +46,13 @@ export function buildMenu(win: BrowserWindow): void {
       ],
     },
     {
+      label: '書式',
+      submenu: [
+        { label: 'セルを結合／解除', click: send('toggle-merge') },
+        { label: 'ウィンドウ枠の固定／解除', click: send('toggle-freeze') },
+      ],
+    },
+    {
       label: '表示',
       submenu: [
         { role: 'reload', label: '再読み込み' },

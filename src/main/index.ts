@@ -140,7 +140,12 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.toggleMerge()
     store.applyStyle({ bold: true, bg: '#FFF3BF', align: 'center' })
 
-    store.setSelection({ row: 4, col: 3 })
+    // ウィンドウ枠を 1 行・1 列で固定し、遠いセルを選んでスクロールさせる
+    store.setSelection({ row: 1, col: 1 })
+    store.toggleFreeze()
+    store.setCellInput({ row: 59, col: 19 }, 'スクロール先')
+    store.setSelection({ row: 59, col: 19 })
+
     store.displayText({ row: 4, col: 3 })
   `
   try {

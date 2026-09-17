@@ -124,6 +124,7 @@ export function SheetCanvas(): React.JSX.Element {
       styleAt: (row, col) => state.styleAt({ row, col }),
       marquee: clipboard && clipboard.origin.sheetId === sheet.id ? clipboard.origin.range : null,
       merges,
+      frozen: sheet.frozen,
     })
   }, [revision, selection, editing, clipboard, scroll, viewport, cols, rows, sheet, merges])
 
@@ -136,48 +137,80 @@ export function SheetCanvas(): React.JSX.Element {
     const x1 = x0 + sizeOf(cols, col)
     const y0 = offsetOf(rows, row)
     const y1 = y0 + sizeOf(rows, row)
-    const viewW = el.clientWidth - HEADER_W
-    const viewH = el.clientHeight - HEADER_H
+    // 固定領域はスクロールしても常に見えているので、可視域の計算から除く。
+    // これを忘れると、固定境界の直後のセルが固定ペインの下に隠れてしまう。
+    const fCols = Math.min(sheet.frozen?.cols ?? 0, sheet.colCount)
+    const fRows = Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount)
+    const frozenWidth = offsetOf(cols, fCols)
+    const frozenHeight = offsetOf(rows, fRows)
+    const viewW = el.clientWidth - HEADER_W - frozenWidth
+    const viewH = el.clientHeight - HEADER_H - frozenHeight
     let nextX = el.scrollLeft
     let nextY = el.scrollTop
-    if (x0 < nextX) nextX = x0
-    else if (x1 > nextX + viewW) nextX = x1 - viewW
-    if (y0 < nextY) nextY = y0
-    else if (y1 > nextY + viewH) nextY = y1 - viewH
+    // 固定領域の中にあるセルはそもそも常に見えている
+    if (col >= fCols) {
+      if (x0 < Math.max(nextX, frozenWidth)) nextX = x0
+      else if (x1 > nextX + viewW) nextX = x1 - viewW
+    }
+    if (row >= fRows) {
+      if (y0 < Math.max(nextY, frozenHeight)) nextY = y0
+      else if (y1 > nextY + viewH) nextY = y1 - viewH
+    }
     if (nextX !== el.scrollLeft || nextY !== el.scrollTop) {
       el.scrollTo({ left: Math.max(0, nextX), top: Math.max(0, nextY) })
     }
-  }, [selection.focus, cols, rows])
+  }, [selection.focus, cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount])
 
   // --- 座標変換 ---------------------------------------------------------
+
+  /**
+   * 画面座標をグリッド座標に直す。ウィンドウ枠を固定している場合、
+   * 固定領域の中ではスクロール量を足さない（そこは動かないため）。
+   */
+  const toGrid = useCallback(
+    (clientX: number, clientY: number) => {
+      const el = scrollRef.current
+      if (!el) return { localX: 0, localY: 0, x: 0, y: 0 }
+      const rect = el.getBoundingClientRect()
+      const localX = clientX - rect.left
+      const localY = clientY - rect.top
+      const frozenW = offsetOf(cols, Math.min(sheet.frozen?.cols ?? 0, sheet.colCount))
+      const frozenH = offsetOf(rows, Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount))
+      const insideFrozenCols = localX - HEADER_W < frozenW
+      const insideFrozenRows = localY - HEADER_H < frozenH
+      const scrollX = insideFrozenCols ? 0 : Math.max(el.scrollLeft, frozenW)
+      const scrollY = insideFrozenRows ? 0 : Math.max(el.scrollTop, frozenH)
+      return {
+        localX,
+        localY,
+        x: localX - HEADER_W + scrollX,
+        y: localY - HEADER_H + scrollY,
+      }
+    },
+    [cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount],
+  )
+
+  const zoneOf = useCallback(
+    (clientX: number, clientY: number) => {
+      const { localX, localY, x, y } = toGrid(clientX, clientY)
+      if (localX < HEADER_W && localY < HEADER_H) return { zone: 'corner' as const, x, y }
+      if (localY < HEADER_H) return { zone: 'col-header' as const, x, y }
+      if (localX < HEADER_W) return { zone: 'row-header' as const, x, y }
+      return { zone: 'body' as const, x, y }
+    },
+    [toGrid],
+  )
+
   const toAddr = useCallback(
     (clientX: number, clientY: number): Addr => {
-      const el = scrollRef.current
-      if (!el) return { row: 0, col: 0 }
-      const rect = el.getBoundingClientRect()
-      const x = clientX - rect.left - HEADER_W + el.scrollLeft
-      const y = clientY - rect.top - HEADER_H + el.scrollTop
+      const { x, y } = toGrid(clientX, clientY)
       const addr = { row: indexAt(rows, y), col: indexAt(cols, x) }
       // 結合セルの内側をクリックしたら、その左上（マスタ）を指す
       const merge = findMerge(sheet.merges, addr)
       return merge ? { row: merge.r0, col: merge.c0 } : addr
     },
-    [cols, rows, sheet.merges],
+    [cols, rows, sheet.merges, toGrid],
   )
-
-  const zoneOf = useCallback((clientX: number, clientY: number) => {
-    const el = scrollRef.current
-    if (!el) return { zone: 'body' as const, x: 0, y: 0 }
-    const rect = el.getBoundingClientRect()
-    const localX = clientX - rect.left
-    const localY = clientY - rect.top
-    const x = localX - HEADER_W + el.scrollLeft
-    const y = localY - HEADER_H + el.scrollTop
-    if (localX < HEADER_W && localY < HEADER_H) return { zone: 'corner' as const, x, y }
-    if (localY < HEADER_H) return { zone: 'col-header' as const, x, y }
-    if (localX < HEADER_W) return { zone: 'row-header' as const, x, y }
-    return { zone: 'body' as const, x, y }
-  }, [])
 
   // --- マウス操作 -------------------------------------------------------
   const snapshotSizes = (): ResizeSnapshot => ({
@@ -375,8 +408,12 @@ export function SheetCanvas(): React.JSX.Element {
     }
   }
 
-  const totalW = totalSize(cols) + HEADER_W
-  const totalH = totalSize(rows) + HEADER_H
+  // 固定領域は常に表示されるので、その分だけスクロール範囲を広げないと
+  // 最終行・最終列がスクロールしても見えない
+  const frozenW = offsetOf(cols, Math.min(sheet.frozen?.cols ?? 0, sheet.colCount))
+  const frozenH = offsetOf(rows, Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount))
+  const totalW = totalSize(cols) + HEADER_W + frozenW
+  const totalH = totalSize(rows) + HEADER_H + frozenH
 
   return (
     <div

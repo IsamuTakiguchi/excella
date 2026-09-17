@@ -78,6 +78,12 @@ export function App(): React.JSX.Element {
         case 'select-all':
           store.selectAll()
           return
+        case 'toggle-merge':
+          store.toggleMerge()
+          return
+        case 'toggle-freeze':
+          store.toggleFreeze()
+          return
         default:
           return
       }

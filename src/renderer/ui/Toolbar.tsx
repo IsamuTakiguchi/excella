@@ -138,6 +138,12 @@ export function Toolbar(): React.JSX.Element {
         <button title="セルを結合／解除" onClick={() => store().toggleMerge()}>
           ⊞
         </button>
+        <button
+          title="アクティブセルの左上でウィンドウ枠を固定／解除"
+          onClick={() => store().toggleFreeze()}
+        >
+          ❄
+        </button>
       </div>
 
       <div className="group">

@@ -408,3 +408,22 @@ describe('結合セル', () => {
     expect(valueOf('B1')).toBe('keep')
   })
 })
+
+describe('ウィンドウ枠の固定', () => {
+  it('アクティブセルの左上で固定し、もう一度で解除される', () => {
+    store().setSelection({ row: 2, col: 1 })
+    store().toggleFreeze()
+    expect(store().activeSheet().frozen).toEqual({ rows: 2, cols: 1 })
+
+    store().toggleFreeze()
+    expect(store().activeSheet().frozen).toBeUndefined()
+  })
+
+  it('undo で元に戻る', () => {
+    store().setSelection({ row: 1, col: 0 })
+    store().toggleFreeze()
+    expect(store().activeSheet().frozen).toEqual({ rows: 1, cols: 0 })
+    store().undo()
+    expect(store().activeSheet().frozen).toBeUndefined()
+  })
+})

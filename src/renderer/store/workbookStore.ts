@@ -116,6 +116,8 @@ type Actions = {
   sortSelection(columnOffset: number, ascending: boolean): void
   /** 選択範囲を結合する（左上以外の内容は破棄）。すでに結合済みなら解除する */
   toggleMerge(): void
+  /** アクティブセルの左上でウィンドウ枠を固定する。固定済みなら解除する */
+  toggleFreeze(): void
 
   addSheet(): void
   removeSheet(sheetId: string): void
@@ -723,6 +725,24 @@ export const useStore = create<Store>((set, get) => {
           focus: { row: range.r1, col: range.c1 },
         },
         statusMessage: `${rangeToA1(range)} を結合しました`,
+      })
+    },
+
+    toggleFreeze: () => {
+      const state = get()
+      const sheet = state.activeSheet()
+      const anchor = state.selection.anchor
+      const already = sheet.frozen && (sheet.frozen.rows > 0 || sheet.frozen.cols > 0)
+
+      mutate((model) => {
+        const target = findSheet(model, model.activeSheetId)
+        if (already) delete target.frozen
+        else target.frozen = { rows: anchor.row, cols: anchor.col }
+      })
+      set({
+        statusMessage: already
+          ? 'ウィンドウ枠の固定を解除しました'
+          : `${anchor.row} 行・${anchor.col} 列を固定しました`,
       })
     },
 

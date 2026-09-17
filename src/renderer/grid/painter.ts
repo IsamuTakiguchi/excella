@@ -1,6 +1,10 @@
 /**
  * Canvas へ 1 フレーム分を描く。
  * 状態は引数として受け取り、ここでは副作用を持たない（React の外で完結させる）。
+ *
+ * ウィンドウ枠を固定している場合は、本体を最大 4 つのペイン
+ * （左上＝行列とも固定 / 右上＝行だけ固定 / 左下＝列だけ固定 / 右下＝通常）に
+ * 分けて描く。各ペインは clip と translate だけが違い、描画処理は共通。
  */
 
 import { colToLetter, rangeContains, type Range } from '@shared/a1'
@@ -28,6 +32,8 @@ export type PaintContext = {
   marquee?: Range | null
   /** 結合セル。左上のセルの内容を矩形いっぱいに描く */
   merges?: Range[]
+  /** ウィンドウ枠の固定（先頭から何行・何列を固定するか） */
+  frozen?: { rows: number; cols: number }
 }
 
 const COLORS = {
@@ -36,6 +42,7 @@ const COLORS = {
   headerActiveBg: '#d7e3f4',
   headerText: '#444c56',
   headerBorder: '#c3c9d1',
+  frozenBorder: '#8b94a0',
   text: '#1f2328',
   selectionFill: 'rgba(38, 109, 211, 0.10)',
   selectionBorder: '#266dd3',
@@ -74,8 +81,22 @@ function mergeAt(merges: Range[] | undefined, row: number, col: number): Range |
   return null
 }
 
+type Span = { first: number; last: number }
+
+/** 画面上の 1 区画。scrollX/scrollY はその区画が表示し始める位置 */
+type Pane = {
+  x: number
+  y: number
+  w: number
+  h: number
+  scrollX: number
+  scrollY: number
+  cols: Span
+  rows: Span
+}
+
 export function paint(p: PaintContext): void {
-  const { ctx, width, height, scrollX, scrollY } = p
+  const { ctx, width, height } = p
 
   ctx.save()
   ctx.clearRect(0, 0, width, height)
@@ -84,15 +105,127 @@ export function paint(p: PaintContext): void {
 
   const viewW = width - HEADER_W
   const viewH = height - HEADER_H
-  const colRange = visibleRange(p.cols, scrollX, viewW)
-  const rowRange = visibleRange(p.rows, scrollY, viewH)
 
-  // --- セル本体 -------------------------------------------------------
+  const frozenCols = Math.min(p.frozen?.cols ?? 0, p.colCount)
+  const frozenRows = Math.min(p.frozen?.rows ?? 0, p.rowCount)
+  const frozenW = offsetOf(p.cols, frozenCols)
+  const frozenH = offsetOf(p.rows, frozenRows)
+
+  // スクロールするペインは、固定領域より手前へは戻さない
+  const scrollX = Math.max(p.scrollX, frozenW)
+  const scrollY = Math.max(p.scrollY, frozenH)
+
+  const movingCols = visibleRange(p.cols, scrollX, viewW - frozenW)
+  const movingRows = visibleRange(p.rows, scrollY, viewH - frozenH)
+  const fixedCols: Span = { first: 0, last: frozenCols - 1 }
+  const fixedRows: Span = { first: 0, last: frozenRows - 1 }
+
+  const panes: Pane[] = [
+    {
+      x: HEADER_W + frozenW,
+      y: HEADER_H + frozenH,
+      w: viewW - frozenW,
+      h: viewH - frozenH,
+      scrollX,
+      scrollY,
+      cols: movingCols,
+      rows: movingRows,
+    },
+  ]
+  if (frozenCols > 0) {
+    panes.push({
+      x: HEADER_W,
+      y: HEADER_H + frozenH,
+      w: frozenW,
+      h: viewH - frozenH,
+      scrollX: 0,
+      scrollY,
+      cols: fixedCols,
+      rows: movingRows,
+    })
+  }
+  if (frozenRows > 0) {
+    panes.push({
+      x: HEADER_W + frozenW,
+      y: HEADER_H,
+      w: viewW - frozenW,
+      h: frozenH,
+      scrollX,
+      scrollY: 0,
+      cols: movingCols,
+      rows: fixedRows,
+    })
+  }
+  if (frozenCols > 0 && frozenRows > 0) {
+    panes.push({
+      x: HEADER_W,
+      y: HEADER_H,
+      w: frozenW,
+      h: frozenH,
+      scrollX: 0,
+      scrollY: 0,
+      cols: fixedCols,
+      rows: fixedRows,
+    })
+  }
+
+  for (const pane of panes) paintPane(p, pane)
+
+  // --- ヘッダ ---------------------------------------------------------
+  ctx.font = `500 12px ${FONT_FAMILY}`
+  ctx.textBaseline = 'middle'
+
+  paintColHeader(p, HEADER_W + frozenW, viewW - frozenW, scrollX, movingCols)
+  if (frozenCols > 0) paintColHeader(p, HEADER_W, frozenW, 0, fixedCols)
+  paintRowHeader(p, HEADER_H + frozenH, viewH - frozenH, scrollY, movingRows)
+  if (frozenRows > 0) paintRowHeader(p, HEADER_H, frozenH, 0, fixedRows)
+
+  // 左上の角
+  ctx.fillStyle = COLORS.headerBg
+  ctx.fillRect(0, 0, HEADER_W, HEADER_H)
+  ctx.strokeStyle = COLORS.headerBorder
+  ctx.beginPath()
+  ctx.moveTo(HEADER_W + 0.5, 0)
+  ctx.lineTo(HEADER_W + 0.5, height)
+  ctx.moveTo(0, HEADER_H + 0.5)
+  ctx.lineTo(width, HEADER_H + 0.5)
+  ctx.stroke()
+
+  // 固定の境界線
+  if (frozenCols > 0 || frozenRows > 0) {
+    ctx.strokeStyle = COLORS.frozenBorder
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    if (frozenCols > 0) {
+      const x = Math.floor(HEADER_W + frozenW) + 0.5
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+    }
+    if (frozenRows > 0) {
+      const y = Math.floor(HEADER_H + frozenH) + 0.5
+      ctx.moveTo(0, y)
+      ctx.lineTo(width, y)
+    }
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
+/** 1 区画ぶんのセルを描く */
+function paintPane(p: PaintContext, pane: Pane): void {
+  const { ctx } = p
+  if (pane.w <= 0 || pane.h <= 0) return
+  if (pane.cols.last < pane.cols.first || pane.rows.last < pane.rows.first) return
+
   ctx.save()
   ctx.beginPath()
-  ctx.rect(HEADER_W, HEADER_H, viewW, viewH)
+  ctx.rect(pane.x, pane.y, pane.w, pane.h)
   ctx.clip()
-  ctx.translate(HEADER_W - scrollX, HEADER_H - scrollY)
+  ctx.translate(pane.x - pane.scrollX, pane.y - pane.scrollY)
+
+  const colRange = pane.cols
+  const rowRange = pane.rows
 
   // 背景色。結合セルは左上の書式を矩形いっぱいに広げる
   for (let r = rowRange.first; r <= rowRange.last; r++) {
@@ -136,7 +269,7 @@ export function paint(p: PaintContext): void {
   }
   ctx.stroke()
 
-  // 結合範囲の内側の罫線を消す（背景色があるセルは上で塗り済みなので枠だけ描き直す）
+  // 結合範囲の内側の罫線を消す
   if (p.merges) {
     for (const merge of p.merges) {
       if (merge.r1 < rowRange.first || merge.r0 > rowRange.last) continue
@@ -159,55 +292,27 @@ export function paint(p: PaintContext): void {
   // テキスト
   ctx.textBaseline = 'middle'
   for (let r = rowRange.first; r <= rowRange.last; r++) {
-    const y = offsetOf(p.rows, r)
-    const h = sizeOf(p.rows, r)
     for (let c = colRange.first; c <= colRange.last; c++) {
       const merge = mergeAt(p.merges, r, c)
       // 結合の従セルには何も描かない
       if (merge && (merge.r0 !== r || merge.c0 !== c)) continue
-      const text = p.textAt(r, c)
-      if (!text) continue
-      const style = p.styleAt(r, c)
-      const rect = merge ? rectOf(p, merge) : null
-      const x = rect ? rect.x : offsetOf(p.cols, c)
-      const w = rect ? rect.w : sizeOf(p.cols, c)
+      drawCellText(p, r, c, merge)
+    }
+  }
 
-      const cellY = rect ? rect.y : y
-      const cellH = rect ? rect.h : h
-
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(x + 1, cellY + 1, w - 2, cellH - 2)
-      ctx.clip()
-      ctx.font = cellFont(style)
-      ctx.fillStyle = style?.color ?? COLORS.text
-
-      const align = style?.align ?? (p.isNumeric(r, c) ? 'right' : 'left')
-      let tx = x + 5
-      if (align === 'right') {
-        ctx.textAlign = 'right'
-        tx = x + w - 5
-      } else if (align === 'center') {
-        ctx.textAlign = 'center'
-        tx = x + w / 2
-      } else {
-        ctx.textAlign = 'left'
-      }
-      ctx.fillText(text, tx, cellY + cellH / 2 + 1)
-
-      if (style?.underline) {
-        const metrics = ctx.measureText(text)
-        const uy =
-          Math.round(cellY + cellH / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
-        const ux =
-          align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
-        ctx.strokeStyle = style.color ?? COLORS.text
-        ctx.beginPath()
-        ctx.moveTo(ux, uy)
-        ctx.lineTo(ux + metrics.width, uy)
-        ctx.stroke()
-      }
-      ctx.restore()
+  // 固定の境界をまたぐ結合は、左上がこのペインの外にあっても描く必要がある
+  // （描かないとペインの隙間で文字が丸ごと消える）
+  if (p.merges) {
+    for (const merge of p.merges) {
+      if (merge.r1 < rowRange.first || merge.r0 > rowRange.last) continue
+      if (merge.c1 < colRange.first || merge.c0 > colRange.last) continue
+      const inside =
+        merge.r0 >= rowRange.first &&
+        merge.r0 <= rowRange.last &&
+        merge.c0 >= colRange.first &&
+        merge.c0 <= colRange.last
+      if (inside) continue // 上のループで描画済み
+      drawCellText(p, merge.r0, merge.c0, merge)
     }
   }
 
@@ -218,103 +323,138 @@ export function paint(p: PaintContext): void {
 
   ctx.strokeStyle = '#ffffff'
   ctx.lineWidth = 1
-  const ax = offsetOf(p.cols, p.active.col)
-  const ay = offsetOf(p.rows, p.active.row)
-  ctx.strokeRect(
-    ax + 0.5,
-    ay + 0.5,
-    sizeOf(p.cols, p.active.col) - 1,
-    sizeOf(p.rows, p.active.row) - 1,
-  )
+  const activeMerge = mergeAt(p.merges, p.active.row, p.active.col)
+  const activeRect = activeMerge
+    ? rectOf(p, activeMerge)
+    : {
+        x: offsetOf(p.cols, p.active.col),
+        y: offsetOf(p.rows, p.active.row),
+        w: sizeOf(p.cols, p.active.col),
+        h: sizeOf(p.rows, p.active.row),
+      }
+  ctx.strokeRect(activeRect.x + 0.5, activeRect.y + 0.5, activeRect.w - 1, activeRect.h - 1)
 
   // コピー中の点線枠
   if (p.marquee) {
-    const m = p.marquee
-    const mx = offsetOf(p.cols, m.c0)
-    const my = offsetOf(p.rows, m.r0)
+    const rect = rectOf(p, p.marquee)
     ctx.save()
     ctx.setLineDash([4, 3])
     ctx.strokeStyle = COLORS.marquee
     ctx.lineWidth = 1.5
-    ctx.strokeRect(
-      mx + 1,
-      my + 1,
-      offsetOf(p.cols, m.c1 + 1) - mx - 2,
-      offsetOf(p.rows, m.r1 + 1) - my - 2,
-    )
+    ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
     ctx.restore()
   }
 
   ctx.restore()
+}
 
-  // --- ヘッダ ---------------------------------------------------------
-  ctx.font = `500 12px ${FONT_FAMILY}`
-  ctx.textBaseline = 'middle'
+/** 1 セル（または結合範囲）のテキストを描く。呼び出し側で clip / translate 済みであること */
+function drawCellText(p: PaintContext, r: number, c: number, merge: Range | null): void {
+  const text = p.textAt(r, c)
+  if (!text) return
+  const { ctx } = p
+  const style = p.styleAt(r, c)
+  const rect = merge
+    ? rectOf(p, merge)
+    : {
+        x: offsetOf(p.cols, c),
+        y: offsetOf(p.rows, r),
+        w: sizeOf(p.cols, c),
+        h: sizeOf(p.rows, r),
+      }
 
-  // 列ヘッダ
   ctx.save()
   ctx.beginPath()
-  ctx.rect(HEADER_W, 0, viewW, HEADER_H)
+  ctx.rect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
+  ctx.clip()
+  ctx.font = cellFont(style)
+  ctx.fillStyle = style?.color ?? COLORS.text
+
+  const align = style?.align ?? (p.isNumeric(r, c) ? 'right' : 'left')
+  let tx = rect.x + 5
+  if (align === 'right') {
+    ctx.textAlign = 'right'
+    tx = rect.x + rect.w - 5
+  } else if (align === 'center') {
+    ctx.textAlign = 'center'
+    tx = rect.x + rect.w / 2
+  } else {
+    ctx.textAlign = 'left'
+  }
+  ctx.fillText(text, tx, rect.y + rect.h / 2 + 1)
+
+  if (style?.underline) {
+    const metrics = ctx.measureText(text)
+    const uy = Math.round(rect.y + rect.h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
+    const ux =
+      align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
+    ctx.strokeStyle = style.color ?? COLORS.text
+    ctx.beginPath()
+    ctx.moveTo(ux, uy)
+    ctx.lineTo(ux + metrics.width, uy)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+function paintColHeader(p: PaintContext, x0: number, w: number, scrollX: number, span: Span): void {
+  const { ctx } = p
+  if (w <= 0 || span.last < span.first) return
+  const sel = p.selection
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x0, 0, w, HEADER_H)
   ctx.clip()
   ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(HEADER_W, 0, viewW, HEADER_H)
-  ctx.translate(HEADER_W - scrollX, 0)
+  ctx.fillRect(x0, 0, w, HEADER_H)
+  ctx.translate(x0 - scrollX, 0)
   ctx.textAlign = 'center'
-  for (let c = colRange.first; c <= colRange.last; c++) {
+  for (let c = span.first; c <= span.last; c++) {
     const x = offsetOf(p.cols, c)
-    const w = sizeOf(p.cols, c)
-    const selected = c >= sel.c0 && c <= sel.c1
-    if (selected) {
+    const cw = sizeOf(p.cols, c)
+    if (c >= sel.c0 && c <= sel.c1) {
       ctx.fillStyle = COLORS.headerActiveBg
-      ctx.fillRect(x, 0, w, HEADER_H)
+      ctx.fillRect(x, 0, cw, HEADER_H)
     }
     ctx.fillStyle = COLORS.headerText
-    ctx.fillText(colToLetter(c), x + w / 2, HEADER_H / 2)
+    ctx.fillText(colToLetter(c), x + cw / 2, HEADER_H / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()
-    ctx.moveTo(Math.floor(x + w) + 0.5, 0)
-    ctx.lineTo(Math.floor(x + w) + 0.5, HEADER_H)
+    ctx.moveTo(Math.floor(x + cw) + 0.5, 0)
+    ctx.lineTo(Math.floor(x + cw) + 0.5, HEADER_H)
     ctx.stroke()
   }
   ctx.restore()
+}
 
-  // 行ヘッダ
+function paintRowHeader(p: PaintContext, y0: number, h: number, scrollY: number, span: Span): void {
+  const { ctx } = p
+  if (h <= 0 || span.last < span.first) return
+  const sel = p.selection
+
   ctx.save()
   ctx.beginPath()
-  ctx.rect(0, HEADER_H, HEADER_W, viewH)
+  ctx.rect(0, y0, HEADER_W, h)
   ctx.clip()
   ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(0, HEADER_H, HEADER_W, viewH)
-  ctx.translate(0, HEADER_H - scrollY)
+  ctx.fillRect(0, y0, HEADER_W, h)
+  ctx.translate(0, y0 - scrollY)
   ctx.textAlign = 'center'
-  for (let r = rowRange.first; r <= rowRange.last; r++) {
+  for (let r = span.first; r <= span.last; r++) {
     const y = offsetOf(p.rows, r)
-    const h = sizeOf(p.rows, r)
-    const selected = r >= sel.r0 && r <= sel.r1
-    if (selected) {
+    const rh = sizeOf(p.rows, r)
+    if (r >= sel.r0 && r <= sel.r1) {
       ctx.fillStyle = COLORS.headerActiveBg
-      ctx.fillRect(0, y, HEADER_W, h)
+      ctx.fillRect(0, y, HEADER_W, rh)
     }
     ctx.fillStyle = COLORS.headerText
-    ctx.fillText(String(r + 1), HEADER_W / 2, y + h / 2)
+    ctx.fillText(String(r + 1), HEADER_W / 2, y + rh / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()
-    ctx.moveTo(0, Math.floor(y + h) + 0.5)
-    ctx.lineTo(HEADER_W, Math.floor(y + h) + 0.5)
+    ctx.moveTo(0, Math.floor(y + rh) + 0.5)
+    ctx.lineTo(HEADER_W, Math.floor(y + rh) + 0.5)
     ctx.stroke()
   }
-  ctx.restore()
-
-  // 左上の角
-  ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(0, 0, HEADER_W, HEADER_H)
-  ctx.strokeStyle = COLORS.headerBorder
-  ctx.beginPath()
-  ctx.moveTo(HEADER_W + 0.5, 0)
-  ctx.lineTo(HEADER_W + 0.5, height)
-  ctx.moveTo(0, HEADER_H + 0.5)
-  ctx.lineTo(width, HEADER_H + 0.5)
-  ctx.stroke()
-
   ctx.restore()
 }

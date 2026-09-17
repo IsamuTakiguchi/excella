@@ -14,6 +14,8 @@ export type MenuAction =
   | 'paste'
   | 'delete'
   | 'select-all'
+  | 'toggle-merge'
+  | 'toggle-freeze'
 
 export type OpenResult = {
   path: string
