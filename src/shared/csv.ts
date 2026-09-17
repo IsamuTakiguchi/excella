@@ -124,10 +124,7 @@ export function csvToWorkbook(text: string, sheetName: string): WorkbookModel {
  * シートを CSV 用の 2 次元配列にする。
  * `displayValues` が与えられていればそれを（＝数式の計算結果を）出力する。
  */
-export function sheetToRows(
-  sheet: SheetModel,
-  displayValues?: Map<string, string>,
-): string[][] {
+export function sheetToRows(sheet: SheetModel, displayValues?: Map<string, string>): string[][] {
   let maxRow = -1
   let maxCol = -1
   for (const key of Object.keys(sheet.cells)) {

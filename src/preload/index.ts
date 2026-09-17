@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, type ExcellaApi, type MenuAction } from '../shared/ipc'
+import { IPC, type ExcellaApi, type MenuAction, type OpenResult } from '../shared/ipc'
 
 const api: ExcellaApi = {
   openWorkbook: () => ipcRenderer.invoke(IPC.openWorkbook),
@@ -12,6 +12,11 @@ const api: ExcellaApi = {
     const listener = (_e: unknown, action: MenuAction) => handler(action)
     ipcRenderer.on(IPC.menu, listener)
     return () => ipcRenderer.removeListener(IPC.menu, listener)
+  },
+  onOpenFile: (handler) => {
+    const listener = (_e: unknown, result: OpenResult) => handler(result)
+    ipcRenderer.on(IPC.openedExternally, listener)
+    return () => ipcRenderer.removeListener(IPC.openedExternally, listener)
   },
 }
 

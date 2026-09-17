@@ -10,6 +10,7 @@ const unavailable: ExcellaApi = {
   exportCsv: async () => null,
   setDirty: () => {},
   onMenu: () => () => {},
+  onOpenFile: () => () => {},
 }
 
 const injected =

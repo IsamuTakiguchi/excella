@@ -36,6 +36,14 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve('src/renderer/index.html') },
+        output: {
+          // 数式エンジンは 2 MB 超あり、アプリ本体のコードと一緒にすると
+          // 単一チャンクが巨大になる。ローカル読み込みなので実害は無いが、
+          // 分けておくと差分更新とビルド警告の見通しが良くなる。
+          manualChunks: {
+            hyperformula: ['hyperformula'],
+          },
+        },
       },
     },
   },

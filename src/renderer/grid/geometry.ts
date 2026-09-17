@@ -12,11 +12,7 @@ export type Sizes = {
   offsets: number[]
 }
 
-export function buildSizes(
-  count: number,
-  custom: Record<number, number>,
-  fallback: number,
-): Sizes {
+export function buildSizes(count: number, custom: Record<number, number>, fallback: number): Sizes {
   const offsets = new Array<number>(count + 1)
   offsets[0] = 0
   for (let i = 0; i < count; i++) {
@@ -64,11 +60,7 @@ export function visibleRange(
 }
 
 /** ヘッダ境界のドラッグ判定。境界から ±tolerance px 以内なら、その手前のインデックスを返す */
-export function borderHit(
-  sizes: Sizes,
-  position: number,
-  tolerance = 4,
-): number | null {
+export function borderHit(sizes: Sizes, position: number, tolerance = 4): number | null {
   const count = sizes.offsets.length - 1
   const approx = indexAt(sizes, position)
   for (const candidate of [approx - 1, approx, approx + 1]) {

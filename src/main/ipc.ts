@@ -41,6 +41,32 @@ function toResultMap(
   return new Map(serialized.map(([sheetId, entries]) => [sheetId, new Map(entries)]))
 }
 
+/**
+ * パスからワークブックを読み込む。ダイアログ経由でも、
+ * ファイル関連付け／コマンドライン引数経由でも同じ経路を通す。
+ */
+export async function readWorkbookFile(filePath: string): Promise<OpenResult> {
+  const ext = extname(filePath).toLowerCase()
+  const name = basename(filePath)
+  if (ext === '.csv' || ext === '.tsv') {
+    const text = await readFile(filePath, 'utf8')
+    return { path: filePath, name, model: csvToWorkbook(text, basename(filePath, ext)) }
+  }
+  return { path: filePath, name, model: await workbookFromXlsx(filePath) }
+}
+
+/** main 側から renderer へ「このファイルを開いた」と伝える */
+export async function openFileInWindow(filePath: string): Promise<void> {
+  const win = mainWindow
+  if (!win) return
+  try {
+    const result = await readWorkbookFile(filePath)
+    win.webContents.send(IPC.openedExternally, result)
+  } catch (error) {
+    dialog.showErrorBox('ファイルを開けませんでした', String(error))
+  }
+}
+
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.openWorkbook, async (): Promise<OpenResult | null> => {
     const win = mainWindow
@@ -55,15 +81,7 @@ export function registerIpcHandlers(): void {
       ],
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    const filePath = result.filePaths[0]
-    const ext = extname(filePath).toLowerCase()
-    const name = basename(filePath)
-
-    if (ext === '.csv' || ext === '.tsv') {
-      const text = await readFile(filePath, 'utf8')
-      return { path: filePath, name, model: csvToWorkbook(text, basename(filePath, ext)) }
-    }
-    return { path: filePath, name, model: await workbookFromXlsx(filePath) }
+    return readWorkbookFile(result.filePaths[0])
   })
 
   ipcMain.handle(

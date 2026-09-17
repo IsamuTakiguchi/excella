@@ -101,7 +101,10 @@ type Actions = {
   setColWidth(col: number, px: number, record?: boolean): void
   setRowHeight(row: number, px: number, record?: boolean): void
   /** ドラッグ確定時に、直前の寸法を 1 つだけ undo 履歴へ積む */
-  commitResize(before: { colWidths: Record<number, number>; rowHeights: Record<number, number> }): void
+  commitResize(before: {
+    colWidths: Record<number, number>
+    rowHeights: Record<number, number>
+  }): void
 
   insertRows(index: number, amount: number): void
   deleteRows(index: number, amount: number): void
@@ -173,7 +176,8 @@ function shiftKeyedRecord<T>(
       continue
     }
     if (delta < 0 && pos < index - delta) continue // 削除された範囲そのもの
-    const moved = axis === 'row' ? { ...addr, row: addr.row + delta } : { ...addr, col: addr.col + delta }
+    const moved =
+      axis === 'row' ? { ...addr, row: addr.row + delta } : { ...addr, col: addr.col + delta }
     next[addrToA1(moved)] = value
   }
   return next
@@ -241,9 +245,7 @@ export function shiftMerges(
     }
 
     const next =
-      axis === 'row'
-        ? { ...range, r0: start, r1: end }
-        : { ...range, c0: start, c1: end }
+      axis === 'row' ? { ...range, r0: start, r1: end } : { ...range, c0: start, c1: end }
     out.push(rangeToA1(next))
   }
   return out
@@ -468,7 +470,11 @@ export const useStore = create<Store>((set, get) => {
         const data = parseInput(text)
         if (data === null) delete sheet.cells[key]
         else sheet.cells[key] = data
-        engine.setContent(model.activeSheetId, addr, data === null ? null : (data.f ?? data.v ?? null))
+        engine.setContent(
+          model.activeSheetId,
+          addr,
+          data === null ? null : (data.f ?? data.v ?? null),
+        )
       })
     },
 
@@ -479,7 +485,8 @@ export const useStore = create<Store>((set, get) => {
         const block: Array<Array<null>> = []
         for (let r = range.r0; r <= range.r1; r++) {
           block.push(new Array(rangeCols(range)).fill(null))
-          for (let c = range.c0; c <= range.c1; c++) delete sheet.cells[addrToA1({ row: r, col: c })]
+          for (let c = range.c0; c <= range.c1; c++)
+            delete sheet.cells[addrToA1({ row: r, col: c })]
         }
         engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
       })

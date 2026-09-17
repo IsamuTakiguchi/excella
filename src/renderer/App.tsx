@@ -16,11 +16,7 @@ export function App(): React.JSX.Element {
       sheet.id,
       [...state.engine.getResultMap(sheet).entries()],
     ])
-    const result = await bridge.saveWorkbook(
-      asNew ? null : state.filePath,
-      state.model,
-      results,
-    )
+    const result = await bridge.saveWorkbook(asNew ? null : state.filePath, state.model, results)
     if (result) state.markSaved(result.path, result.name)
   }, [])
 
@@ -91,6 +87,17 @@ export function App(): React.JSX.Element {
 
   useEffect(() => bridge.onMenu(handleMenu), [handleMenu])
 
+  // ファイル関連付けやコマンドライン引数から開かれた場合
+  useEffect(
+    () =>
+      bridge.onOpenFile((result) => {
+        const store = useStore.getState()
+        if (store.dirty && !confirm('保存していない変更があります。破棄して開きますか？')) return
+        store.loadWorkbook(result.model, result.path, result.name)
+      }),
+    [],
+  )
+
   // メニューのアクセラレータが効かない場面（フォーカスが入力欄にあるなど）に備えた保険
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -158,7 +165,8 @@ export function App(): React.JSX.Element {
     <div className="app">
       {hasFileAccess ? null : (
         <div className="warning-banner">
-          ファイルの読み書きが使えません（preload の読み込みに失敗しています）。編集と計算は利用できます。
+          ファイルの読み書きが使えません（preload
+          の読み込みに失敗しています）。編集と計算は利用できます。
         </div>
       )}
       <Toolbar />

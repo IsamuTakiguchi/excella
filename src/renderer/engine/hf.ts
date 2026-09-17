@@ -192,7 +192,10 @@ export class Engine {
   }
 
   /** シート全体の表示値を A1 キーの Map にする（CSV 書き出し用） */
-  getDisplayMap(sheetId: string, format: (value: DisplayValue, key: string) => string): Map<string, string> {
+  getDisplayMap(
+    sheetId: string,
+    format: (value: DisplayValue, key: string) => string,
+  ): Map<string, string> {
     const out = new Map<string, string>()
     const grid = this.hf.getSheetValues(this.hfId(sheetId))
     for (let r = 0; r < grid.length; r++) {

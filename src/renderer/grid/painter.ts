@@ -5,14 +5,7 @@
 
 import { colToLetter, type Range } from '@shared/a1'
 import { DEFAULT_FONT_SIZE, type CellStyle } from '@shared/model'
-import {
-  HEADER_H,
-  HEADER_W,
-  offsetOf,
-  sizeOf,
-  visibleRange,
-  type Sizes,
-} from './geometry'
+import { HEADER_H, HEADER_W, offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
 
 export type PaintContext = {
   ctx: CanvasRenderingContext2D
@@ -150,7 +143,8 @@ export function paint(p: PaintContext): void {
       if (style?.underline) {
         const metrics = ctx.measureText(text)
         const uy = Math.round(y + h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
-        const ux = align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
+        const ux =
+          align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
         ctx.strokeStyle = style.color ?? COLORS.text
         ctx.beginPath()
         ctx.moveTo(ux, uy)
@@ -170,7 +164,12 @@ export function paint(p: PaintContext): void {
   ctx.lineWidth = 1
   const ax = offsetOf(p.cols, p.active.col)
   const ay = offsetOf(p.rows, p.active.row)
-  ctx.strokeRect(ax + 0.5, ay + 0.5, sizeOf(p.cols, p.active.col) - 1, sizeOf(p.rows, p.active.row) - 1)
+  ctx.strokeRect(
+    ax + 0.5,
+    ay + 0.5,
+    sizeOf(p.cols, p.active.col) - 1,
+    sizeOf(p.rows, p.active.row) - 1,
+  )
 
   // コピー中の点線枠
   if (p.marquee) {

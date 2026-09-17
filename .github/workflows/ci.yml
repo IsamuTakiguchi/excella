@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 整形チェック
+        run: npm run format:check
+
+      - name: 型チェック
+        run: npm run typecheck
+
+      - name: テスト
+        run: npm test
+
+      - name: ビルド
+        run: npm run build
+
+      # Electron を実際に起動して、サンプルデータが描画されるところまで確認する。
+      # ヘッドレスなので xvfb 経由、コンテナ内なので --no-sandbox が要る。
+      - name: 起動スモークテスト
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a npx electron ./out/main/index.js --smoke --no-sandbox \
+            --screenshot smoke.png
+
+      # ファイル関連付け／コマンドライン引数からの起動経路も通す
+      - name: ファイルを開く経路のスモークテスト
+        run: |
+          printf '商品,単価,数量,小計\nりんご,180,12,=B2*C2\n合計,,,=SUM(D2:D2)\n' > sample.csv
+          xvfb-run -a npx electron ./out/main/index.js --smoke --no-sandbox sample.csv \
+            | grep -q '開いたファイル: sample.csv'
+
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot
+          path: smoke.png
+          if-no-files-found: ignore

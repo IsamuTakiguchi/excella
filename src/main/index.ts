@@ -1,13 +1,34 @@
 import { app, BrowserWindow, shell } from 'electron'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { registerIpcHandlers, setMainWindow } from './ipc'
+import { openFileInWindow, registerIpcHandlers, setMainWindow } from './ipc'
 import { buildMenu } from './menu'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 /** `--smoke` 付きで起動されたら、ウィンドウを表示して数秒で終了する（CI/ヘッドレス確認用） */
 const SMOKE = process.argv.includes('--smoke')
+
+const OPENABLE = /\.(xlsx|csv|tsv)$/i
+
+/** コマンドライン引数から、開くべきファイルのパスを拾う（Windows / Linux の関連付け） */
+function fileFromArgv(argv: string[]): string | null {
+  for (const arg of argv.slice(1)) {
+    if (arg.startsWith('-')) continue
+    if (OPENABLE.test(arg) && existsSync(arg)) return resolve(arg)
+  }
+  return null
+}
+
+/** macOS は open-file イベントで届く。ready 前に来ることがあるので溜めておく */
+let pendingFile: string | null = null
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  pendingFile = filePath
+  if (app.isReady()) void openFileInWindow(filePath)
+})
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -59,6 +80,14 @@ void app.whenReady().then(() => {
     win.webContents.once('did-finish-load', () => {
       void runSmoke(win)
     })
+  } else {
+    const initial = pendingFile ?? fileFromArgv(process.argv)
+    if (initial) {
+      win.webContents.once('did-finish-load', () => {
+        pendingFile = null
+        void openFileInWindow(initial)
+      })
+    }
   }
 })
 
@@ -71,6 +100,20 @@ app.on('window-all-closed', () => {
  * サンプルデータを流し込み、`--screenshot <path>` が渡されていれば PNG を書き出す。
  */
 async function runSmoke(win: BrowserWindow): Promise<void> {
+  // ファイルを指定して起動された場合は、関連付け経由と同じ経路で開いて確認する
+  const target = fileFromArgv(process.argv)
+  if (target) {
+    await openFileInWindow(target)
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const name = await win.webContents.executeJavaScript(
+      'window.__excellaStore.getState().fileName',
+    )
+    console.log(`[smoke] 開いたファイル: ${String(name)}`)
+    await captureIfRequested(win)
+    app.exit(0)
+    return
+  }
+
   const seed = `
     const store = window.__excellaStore.getState()
     const rows = [
@@ -103,15 +146,19 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     return
   }
 
-  const shotIndex = process.argv.indexOf('--screenshot')
-  if (shotIndex >= 0 && process.argv[shotIndex + 1]) {
-    await new Promise((resolve) => setTimeout(resolve, 600))
-    const image = await win.webContents.capturePage()
-    const { writeFile } = await import('node:fs/promises')
-    await writeFile(process.argv[shotIndex + 1], image.toPNG())
-    console.log(`[smoke] スクリーンショットを保存しました: ${process.argv[shotIndex + 1]}`)
-  }
-
+  await captureIfRequested(win)
   console.log('[smoke] 正常に描画できました')
   app.exit(0)
+}
+
+/** `--screenshot <path>` が渡されていれば画面を PNG で保存する */
+async function captureIfRequested(win: BrowserWindow): Promise<void> {
+  const shotIndex = process.argv.indexOf('--screenshot')
+  const path = shotIndex >= 0 ? process.argv[shotIndex + 1] : undefined
+  if (!path) return
+  await new Promise((done) => setTimeout(done, 600))
+  const image = await win.webContents.capturePage()
+  const { writeFile } = await import('node:fs/promises')
+  await writeFile(path, image.toPNG())
+  console.log(`[smoke] スクリーンショットを保存しました: ${path}`)
 }

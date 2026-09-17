@@ -94,7 +94,9 @@ export function Toolbar(): React.JSX.Element {
           title="表示形式"
           value={style?.numFmt ?? 'General'}
           onChange={(e) =>
-            store().applyStyle({ numFmt: e.target.value === 'General' ? undefined : e.target.value })
+            store().applyStyle({
+              numFmt: e.target.value === 'General' ? undefined : e.target.value,
+            })
           }
         >
           {NUMBER_FORMATS.map((fmt) => (
@@ -106,25 +108,43 @@ export function Toolbar(): React.JSX.Element {
       </div>
 
       <div className="group">
-        <button title="行を挿入" onClick={() => store().insertRows(range.r0, range.r1 - range.r0 + 1)}>
+        <button
+          title="行を挿入"
+          onClick={() => store().insertRows(range.r0, range.r1 - range.r0 + 1)}
+        >
           行＋
         </button>
-        <button title="行を削除" onClick={() => store().deleteRows(range.r0, range.r1 - range.r0 + 1)}>
+        <button
+          title="行を削除"
+          onClick={() => store().deleteRows(range.r0, range.r1 - range.r0 + 1)}
+        >
           行−
         </button>
-        <button title="列を挿入" onClick={() => store().insertColumns(range.c0, range.c1 - range.c0 + 1)}>
+        <button
+          title="列を挿入"
+          onClick={() => store().insertColumns(range.c0, range.c1 - range.c0 + 1)}
+        >
           列＋
         </button>
-        <button title="列を削除" onClick={() => store().deleteColumns(range.c0, range.c1 - range.c0 + 1)}>
+        <button
+          title="列を削除"
+          onClick={() => store().deleteColumns(range.c0, range.c1 - range.c0 + 1)}
+        >
           列−
         </button>
       </div>
 
       <div className="group">
-        <button title="選択範囲を左端の列で昇順に並べ替え" onClick={() => store().sortSelection(0, true)}>
+        <button
+          title="選択範囲を左端の列で昇順に並べ替え"
+          onClick={() => store().sortSelection(0, true)}
+        >
           A→Z
         </button>
-        <button title="選択範囲を左端の列で降順に並べ替え" onClick={() => store().sortSelection(0, false)}>
+        <button
+          title="選択範囲を左端の列で降順に並べ替え"
+          onClick={() => store().sortSelection(0, false)}
+        >
           Z→A
         </button>
       </div>

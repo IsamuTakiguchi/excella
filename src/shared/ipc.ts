@@ -53,6 +53,11 @@ export type ExcellaApi = {
   setDirty(dirty: boolean): void
   /** ネイティブメニューのアクションを購読する。戻り値で解除 */
   onMenu(handler: (action: MenuAction) => void): () => void
+  /**
+   * 関連付けやコマンドライン引数から開かれたファイルを受け取る。
+   * ダイアログ経由ではなく main 側から一方的に届く点が openWorkbook と異なる。
+   */
+  onOpenFile(handler: (result: OpenResult) => void): () => void
 }
 
 export const IPC = {
@@ -61,4 +66,5 @@ export const IPC = {
   exportCsv: 'workbook:export-csv',
   setDirty: 'app:set-dirty',
   menu: 'app:menu',
+  openedExternally: 'workbook:opened',
 } as const
