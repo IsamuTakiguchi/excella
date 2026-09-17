@@ -74,6 +74,26 @@ describe('xlsx の往復', () => {
     expect(loaded.sheets[1].cells['A1']).toEqual({ v: '2 枚目のシート' })
   })
 
+  it('結合セルは左上だけが値を持ち、従セルは空になる', async () => {
+    const sheet = createSheet('結合')
+    sheet.cells = { A1: { v: 'タイトル' }, A3: { v: '本文' } }
+    sheet.merges = ['A1:C2']
+    const path = join(dir, 'merged.xlsx')
+    await xlsxFromWorkbook(path, { version: 1, sheets: [sheet], activeSheetId: sheet.id })
+
+    const loaded = await workbookFromXlsx(path)
+    const out = loaded.sheets[0]
+    expect(out.merges).toContain('A1:C2')
+    expect(out.cells['A1']).toEqual({ v: 'タイトル' })
+    // 従セルに値が複製されていないこと
+    expect(out.cells['B1']).toBeUndefined()
+    expect(out.cells['C1']).toBeUndefined()
+    expect(out.cells['A2']).toBeUndefined()
+    expect(out.cells['C2']).toBeUndefined()
+    // 結合外のセルは通常どおり
+    expect(out.cells['A3']).toEqual({ v: '本文' })
+  })
+
   it('空のブックでも壊れない', async () => {
     const sheet = createSheet('Sheet1')
     const path = join(dir, 'empty.xlsx')

@@ -69,6 +69,10 @@ function readStyle(cell: ExcelJS.Cell): CellStyle {
 }
 
 function readCellValue(cell: ExcelJS.Cell): { f?: string; v?: string | number | boolean } | null {
+  // 結合セルの従セルは ExcelJS がマスタの値を返すため、そのまま取り込むと
+  // 結合範囲いっぱいに同じ値が複製されてしまう。内容はマスタ側だけから読む。
+  if (cell.type === ExcelJS.ValueType.Merge) return null
+
   const value = cell.value
   if (value === null || value === undefined) return null
 

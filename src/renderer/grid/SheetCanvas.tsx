@@ -19,9 +19,27 @@ type DragState =
   | { kind: 'select' }
   | { kind: 'select-col' }
   | { kind: 'select-row' }
-  | { kind: 'resize-col'; index: number; startX: number; startSize: number }
-  | { kind: 'resize-row'; index: number; startY: number; startSize: number }
+  | {
+      kind: 'resize-col'
+      index: number
+      startX: number
+      startSize: number
+      before: ResizeSnapshot
+    }
+  | {
+      kind: 'resize-row'
+      index: number
+      startY: number
+      startSize: number
+      before: ResizeSnapshot
+    }
   | null
+
+/** ドラッグ開始時点の列幅・行高。確定時に undo 1 回分としてまとめて積む */
+type ResizeSnapshot = {
+  colWidths: Record<number, number>
+  rowHeights: Record<number, number>
+}
 
 export function SheetCanvas(): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -154,6 +172,11 @@ export function SheetCanvas(): React.JSX.Element {
   }, [])
 
   // --- マウス操作 -------------------------------------------------------
+  const snapshotSizes = (): ResizeSnapshot => ({
+    colWidths: { ...sheet.colWidths },
+    rowHeights: { ...sheet.rowHeights },
+  })
+
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return
     const store = useStore.getState()
@@ -175,6 +198,7 @@ export function SheetCanvas(): React.JSX.Element {
           index: hit,
           startX: e.clientX,
           startSize: sizeOf(cols, hit),
+          before: snapshotSizes(),
         }
         return
       }
@@ -190,6 +214,7 @@ export function SheetCanvas(): React.JSX.Element {
           index: hit,
           startY: e.clientY,
           startSize: sizeOf(rows, hit),
+          before: snapshotSizes(),
         }
         return
       }
@@ -217,12 +242,12 @@ export function SheetCanvas(): React.JSX.Element {
 
     if (drag.kind === 'resize-col') {
       const px = drag.startSize + (e.clientX - drag.startX)
-      store.setColWidth(drag.index, px)
+      store.setColWidth(drag.index, px, false)
       return
     }
     if (drag.kind === 'resize-row') {
       const px = drag.startSize + (e.clientY - drag.startY)
-      store.setRowHeight(drag.index, px)
+      store.setRowHeight(drag.index, px, false)
       return
     }
 
@@ -233,7 +258,11 @@ export function SheetCanvas(): React.JSX.Element {
   }
 
   const endDrag = () => {
+    const drag = dragRef.current
     dragRef.current = null
+    if (drag && (drag.kind === 'resize-col' || drag.kind === 'resize-row')) {
+      useStore.getState().commitResize(drag.before)
+    }
   }
 
   const onDoubleClick = (e: React.MouseEvent) => {

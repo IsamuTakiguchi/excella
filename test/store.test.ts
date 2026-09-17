@@ -242,3 +242,120 @@ describe('シート操作', () => {
     expect(valueOf('A1')).toBe(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 以下は監査で見つかった不具合の回帰テスト（Phase A）
+// ---------------------------------------------------------------------------
+
+describe('回帰: シートをまたいだ切り取り', () => {
+  it('コピー元のシートが消え、貼り付け先の他セルは無傷', async () => {
+    const first = store().model.activeSheetId
+    setCell('A1', '100')
+    setCell('A2', '200')
+
+    store().addSheet()
+    const second = store().model.activeSheetId
+    setCell('A1', 'keep-A1')
+    setCell('A2', 'keep-A2')
+    setCell('C1', 'target')
+
+    // Sheet1 の A1:A2 を切り取って Sheet2 の C1 に貼る
+    store().setActiveSheet(first)
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 0 })
+    await store().copy(true)
+    store().setActiveSheet(second)
+    store().setSelection({ row: 0, col: 2 })
+    store().paste()
+
+    // 貼り付け先
+    expect(valueOf('C1')).toBe(100)
+    expect(valueOf('C2')).toBe(200)
+    // 貼り付け先シートの無関係なセルが巻き込まれていない
+    expect(valueOf('A1')).toBe('keep-A1')
+    expect(valueOf('A2')).toBe('keep-A2')
+
+    // 切り取り元シートは空になっている（モデル・エンジンの両方で）
+    store().setActiveSheet(first)
+    expect(valueOf('A1')).toBeNull()
+    expect(valueOf('A2')).toBeNull()
+    expect(store().activeSheet().cells['A1']).toBeUndefined()
+  })
+})
+
+describe('回帰: 列幅ドラッグの undo', () => {
+  it('ドラッグ中の連続更新は履歴を積まず、undo 1 回で戻る', () => {
+    setCell('A1', 'anchor')
+    const before = {
+      colWidths: { ...store().activeSheet().colWidths },
+      rowHeights: { ...store().activeSheet().rowHeights },
+    }
+    // mousemove 相当を 30 回
+    for (let i = 0; i < 30; i++) store().setColWidth(0, 100 + i, false)
+    store().commitResize(before)
+    expect(store().activeSheet().colWidths[0]).toBe(129)
+
+    store().undo()
+    expect(store().activeSheet().colWidths[0]).toBeUndefined()
+    // 直前の実編集が履歴から押し出されていない
+    store().undo()
+    expect(valueOf('A1')).toBeNull()
+  })
+})
+
+describe('回帰: 行列の挿入削除で結合セルが追従する', () => {
+  it('挿入でずれ、削除で消える', () => {
+    const sheet = store().activeSheet()
+    sheet.merges.push('B2:C3')
+    store().insertRows(0, 1)
+    expect(store().activeSheet().merges).toEqual(['B3:C4'])
+
+    store().insertColumns(0, 2)
+    expect(store().activeSheet().merges).toEqual(['D3:E4'])
+
+    // 結合範囲を丸ごと含む行削除で消える
+    store().deleteRows(2, 2)
+    expect(store().activeSheet().merges).toEqual([])
+  })
+
+  it('またがった削除では結合が縮む', () => {
+    const sheet = store().activeSheet()
+    sheet.merges.push('A1:A4')
+    store().deleteRows(2, 2) // 3〜4 行目を削除
+    expect(store().activeSheet().merges).toEqual(['A1:A2'])
+  })
+})
+
+describe('回帰: undo で保存状態に戻ると dirty が解除される', () => {
+  it('保存 → 編集 → undo で未保存フラグが消える', () => {
+    store().markSaved('/tmp/book.xlsx', 'book.xlsx')
+    expect(store().dirty).toBe(false)
+
+    setCell('A1', '1')
+    expect(store().dirty).toBe(true)
+
+    store().undo()
+    expect(store().dirty).toBe(false)
+
+    store().redo()
+    expect(store().dirty).toBe(true)
+  })
+})
+
+describe('回帰: 貼り付けでシートが広がる', () => {
+  it('最終行付近に貼ると rowCount が伸びる', () => {
+    const lastRow = store().activeSheet().rowCount - 1
+    store().setSelection({ row: lastRow, col: 0 })
+    store().paste('a\nb\nc')
+    expect(store().activeSheet().rowCount).toBeGreaterThan(lastRow + 3)
+  })
+})
+
+describe('回帰: 並べ替えのメッセージが列名になる', () => {
+  it('セル番地ではなく列名を出す', () => {
+    setCell('B1', '2')
+    setCell('B2', '1')
+    store().setSelection({ row: 0, col: 1 }, { row: 1, col: 1 })
+    store().sortSelection(0, true)
+    expect(store().statusMessage).toBe('B 列で並べ替えました')
+  })
+})

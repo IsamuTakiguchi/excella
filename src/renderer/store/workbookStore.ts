@@ -11,10 +11,13 @@ import { create } from 'zustand'
 import {
   addrToA1,
   a1ToAddr,
+  a1ToRange,
+  colToLetter,
   iterRange,
   makeRange,
   rangeCols,
   rangeRows,
+  rangeToA1,
   type Addr,
   type Range,
 } from '@shared/a1'
@@ -94,8 +97,11 @@ type Actions = {
   setCellInput(addr: Addr, text: string): void
   clearSelection(): void
   applyStyle(patch: CellStyle, toggle?: boolean): void
-  setColWidth(col: number, px: number): void
-  setRowHeight(row: number, px: number): void
+  /** record=false はドラッグ中の連続更新用（undo 履歴を積まない） */
+  setColWidth(col: number, px: number, record?: boolean): void
+  setRowHeight(row: number, px: number, record?: boolean): void
+  /** ドラッグ確定時に、直前の寸法を 1 つだけ undo 履歴へ積む */
+  commitResize(before: { colWidths: Record<number, number>; rowHeights: Record<number, number> }): void
 
   insertRows(index: number, amount: number): void
   deleteRows(index: number, amount: number): void
@@ -192,6 +198,63 @@ function shiftIndexRecord(
   return next
 }
 
+/**
+ * 行・列の挿入削除に合わせて結合セルの範囲をずらす。
+ * 削除された行列に完全に飲み込まれた結合は破棄し、またがった結合は縮める。
+ */
+export function shiftMerges(
+  merges: string[],
+  axis: 'row' | 'col',
+  index: number,
+  delta: number,
+): string[] {
+  const out: string[] = []
+  for (const text of merges) {
+    const range = a1ToRange(text)
+    if (!range) continue
+    let start = axis === 'row' ? range.r0 : range.c0
+    let end = axis === 'row' ? range.r1 : range.c1
+
+    if (delta > 0) {
+      // 挿入：開始位置以降は丸ごとずらし、途中に入ったものは伸ばす
+      if (start >= index) {
+        start += delta
+        end += delta
+      } else if (end >= index) {
+        end += delta
+      }
+    } else {
+      const removed = -delta
+      const from = index
+      const to = index + removed - 1
+      if (start >= from && end <= to) continue // 完全に削除された
+      if (start > to) {
+        start += delta
+        end += delta
+      } else {
+        // 重なった分だけ縮める
+        const overlap = Math.max(0, Math.min(end, to) - Math.max(start, from) + 1)
+        end -= overlap
+        if (start > from) start = from
+      }
+      if (end <= start) continue // 1 セルに潰れたら結合を解除
+    }
+
+    const next =
+      axis === 'row'
+        ? { ...range, r0: start, r1: end }
+        : { ...range, c0: start, c1: end }
+    out.push(rangeToA1(next))
+  }
+  return out
+}
+
+/** 貼り付けなどで範囲外に書き込んだとき、シートの行数・列数を伸ばす */
+function growSheet(sheet: SheetModel, lastRow: number, lastCol: number): void {
+  if (lastRow >= sheet.rowCount) sheet.rowCount = lastRow + 10
+  if (lastCol >= sheet.colCount) sheet.colCount = lastCol + 5
+}
+
 /** 構造操作のあと、数式が書き換わったモデル側 cells を HyperFormula から引き直す */
 function syncCellsFromEngine(sheet: SheetModel, engine: Engine): void {
   const grid = engine.getSheetSerialized(sheet.id)
@@ -224,6 +287,12 @@ export const useStore = create<Store>((set, get) => {
   /** 変更前スナップショットを積んでからモデルを書き換える */
   const undoStack: WorkbookModel[] = []
   const redoStack: WorkbookModel[] = []
+  /** 最後に保存（または新規作成・読み込み）した時点のモデル。dirty 判定に使う */
+  let savedModel: WorkbookModel | null = null
+
+  /** undo/redo で戻った先が保存時点と同じなら「未保存」を解除する */
+  const isSameAsSaved = (model: WorkbookModel): boolean =>
+    savedModel !== null && JSON.stringify(model) === JSON.stringify(savedModel)
 
   const markDirty = () => {
     bridge.setDirty(true)
@@ -445,24 +514,41 @@ export const useStore = create<Store>((set, get) => {
       })
     },
 
-    setColWidth: (col, px) => {
+    setColWidth: (col, px, record = true) => {
       mutate((model) => {
         const sheet = findSheet(model, model.activeSheetId)
         sheet.colWidths[col] = Math.max(24, Math.round(px))
-      })
+      }, record)
     },
 
-    setRowHeight: (row, px) => {
+    setRowHeight: (row, px, record = true) => {
       mutate((model) => {
         const sheet = findSheet(model, model.activeSheetId)
         sheet.rowHeights[row] = Math.max(14, Math.round(px))
-      })
+      }, record)
+    },
+
+    commitResize: (before) => {
+      // ドラッグ開始時点の寸法を持つスナップショットを作って履歴に積む。
+      // こうするとドラッグ全体が undo 1 回で元に戻る。
+      const { model } = get()
+      const snapshot = cloneModel(model)
+      const sheet = snapshot.sheets.find((s) => s.id === snapshot.activeSheetId)
+      if (sheet) {
+        sheet.colWidths = { ...before.colWidths }
+        sheet.rowHeights = { ...before.rowHeights }
+      }
+      undoStack.push(snapshot)
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift()
+      redoStack.length = 0
+      set({ canUndo: true, canRedo: false })
     },
 
     insertRows: (index, amount) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
         engine.addRows(sheet.id, index, amount)
+        sheet.merges = shiftMerges(sheet.merges, 'row', index, +amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'row', index, amount)
         sheet.rowHeights = shiftIndexRecord(sheet.rowHeights, index, amount)
         sheet.rowCount += amount
@@ -474,6 +560,7 @@ export const useStore = create<Store>((set, get) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
         engine.removeRows(sheet.id, index, amount)
+        sheet.merges = shiftMerges(sheet.merges, 'row', index, -amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'row', index, -amount)
         sheet.rowHeights = shiftIndexRecord(sheet.rowHeights, index, -amount)
         sheet.rowCount = Math.max(1, sheet.rowCount - amount)
@@ -485,6 +572,7 @@ export const useStore = create<Store>((set, get) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
         engine.addColumns(sheet.id, index, amount)
+        sheet.merges = shiftMerges(sheet.merges, 'col', index, +amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'col', index, amount)
         sheet.colWidths = shiftIndexRecord(sheet.colWidths, index, amount)
         sheet.colCount += amount
@@ -496,6 +584,7 @@ export const useStore = create<Store>((set, get) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
         engine.removeColumns(sheet.id, index, amount)
+        sheet.merges = shiftMerges(sheet.merges, 'col', index, -amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'col', index, -amount)
         sheet.colWidths = shiftIndexRecord(sheet.colWidths, index, -amount)
         sheet.colCount = Math.max(1, sheet.colCount - amount)
@@ -552,7 +641,7 @@ export const useStore = create<Store>((set, get) => {
         engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
         syncCellsFromEngine(sheet, engine)
       })
-      set({ statusMessage: `${addrToA1({ row: range.r0, col: sortCol })} 列で並べ替えました` })
+      set({ statusMessage: `${colToLetter(sortCol)} 列で並べ替えました` })
     },
 
     addSheet: () => {
@@ -684,6 +773,11 @@ export const useStore = create<Store>((set, get) => {
             })
             block.push(out)
           })
+          growSheet(
+            sheet,
+            topLeft.row + rows.length - 1,
+            topLeft.col + Math.max(...rows.map((r) => r.length)) - 1,
+          )
           engine.setBlock(model.activeSheetId, topLeft, block)
         })
         set({
@@ -706,19 +800,24 @@ export const useStore = create<Store>((set, get) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
 
-        // 切り取り元を先に消す
+        // 切り取り元を先に消す。別シートから切り取った場合もあるので、
+        // モデル側のクリア対象は必ずコピー元のシートにする
         if (clip.cut) {
           const src = clip.origin.range
+          const srcSheet = model.sheets.find((s) => s.id === clip.origin.sheetId)
           const blank: Array<Array<null>> = []
           for (let r = src.r0; r <= src.r1; r++) {
             blank.push(new Array(rangeCols(src)).fill(null))
+            if (!srcSheet) continue
             for (let c = src.c0; c <= src.c1; c++) {
               const key = addrToA1({ row: r, col: c })
-              delete sheet.cells[key]
-              delete sheet.styles[key]
+              delete srcSheet.cells[key]
+              delete srcSheet.styles[key]
             }
           }
-          engine.setBlock(clip.origin.sheetId, { row: src.r0, col: src.c0 }, blank)
+          if (srcSheet) {
+            engine.setBlock(clip.origin.sheetId, { row: src.r0, col: src.c0 }, blank)
+          }
         }
 
         const block: Array<Array<string | number | boolean | null>> = []
@@ -744,6 +843,7 @@ export const useStore = create<Store>((set, get) => {
           }
           block.push(out)
         }
+        growSheet(sheet, topLeft.row + clip.rows - 1, topLeft.col + clip.cols - 1)
         engine.setBlock(model.activeSheetId, topLeft, block)
       })
 
@@ -762,15 +862,16 @@ export const useStore = create<Store>((set, get) => {
       const { model, engine } = get()
       redoStack.push(cloneModel(model))
       engine.rebuild(snapshot)
+      const clean = isSameAsSaved(snapshot)
       set({
         model: snapshot,
         revision: get().revision + 1,
         editing: null,
-        dirty: true,
+        dirty: !clean,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
       })
-      markDirty()
+      bridge.setDirty(!clean)
     },
 
     redo: () => {
@@ -779,20 +880,22 @@ export const useStore = create<Store>((set, get) => {
       const { model, engine } = get()
       undoStack.push(cloneModel(model))
       engine.rebuild(snapshot)
+      const clean = isSameAsSaved(snapshot)
       set({
         model: snapshot,
         revision: get().revision + 1,
         editing: null,
-        dirty: true,
+        dirty: !clean,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
       })
-      markDirty()
+      bridge.setDirty(!clean)
     },
 
     newWorkbook: () => {
       const model = createWorkbook()
       get().engine.rebuild(model)
+      savedModel = cloneModel(model)
       undoStack.length = 0
       redoStack.length = 0
       set({
@@ -812,6 +915,7 @@ export const useStore = create<Store>((set, get) => {
 
     loadWorkbook: (model, path, name) => {
       get().engine.rebuild(model)
+      savedModel = cloneModel(model)
       undoStack.length = 0
       redoStack.length = 0
       set({
@@ -830,6 +934,7 @@ export const useStore = create<Store>((set, get) => {
     },
 
     markSaved: (path, name) => {
+      savedModel = cloneModel(get().model)
       set({ filePath: path, fileName: name, dirty: false, statusMessage: `${name} に保存しました` })
       bridge.setDirty(false)
     },
