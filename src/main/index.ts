@@ -140,7 +140,10 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.toggleMerge()
     store.applyStyle({ bold: true, bg: '#FFF3BF', align: 'center' })
 
-    store.setSelection({ row: 2, col: 1 }, { row: 3, col: 2 })
+    // 見出し行を 1 行だけ固定し、合計セルを選んだ状態にする
+    store.setSelection({ row: 1, col: 0 })
+    store.toggleFreeze()
+    store.setSelection({ row: 4, col: 3 })
 
     store.displayText({ row: 4, col: 3 })
   `

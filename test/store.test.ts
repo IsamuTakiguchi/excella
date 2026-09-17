@@ -467,3 +467,48 @@ describe('書式のクリア', () => {
     expect(valueOf('A1')).toBe('値')
   })
 })
+
+describe('フィルハンドル', () => {
+  it('下方向へ連番を伸ばす', () => {
+    setCell('A1', '1')
+    setCell('A2', '2')
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 0 })
+    store().fillFrom({ r0: 0, c0: 0, r1: 1, c1: 0 }, { r0: 0, c0: 0, r1: 4, c1: 0 })
+    expect([valueOf('A3'), valueOf('A4'), valueOf('A5')]).toEqual([3, 4, 5])
+  })
+
+  it('右方向へ数式をずらして伸ばす', () => {
+    setCell('A1', '10')
+    setCell('B1', '20')
+    setCell('A2', '=A1*2')
+    store().setSelection({ row: 1, col: 0 })
+    store().fillFrom({ r0: 1, c0: 0, r1: 1, c1: 0 }, { r0: 1, c0: 0, r1: 1, c1: 1 })
+    expect(inputOf('B2')).toBe('=B1*2')
+    expect(valueOf('B2')).toBe(40)
+  })
+
+  it('書式も一緒に伸びる', () => {
+    setCell('A1', '1')
+    store().setSelection({ row: 0, col: 0 })
+    store().applyStyle({ bold: true })
+    store().fillFrom({ r0: 0, c0: 0, r1: 0, c1: 0 }, { r0: 0, c0: 0, r1: 2, c1: 0 })
+    expect(store().activeSheet().styles['A3']?.bold).toBe(true)
+  })
+
+  it('上方向にも伸ばせる', () => {
+    setCell('A5', '5')
+    setCell('A6', '6')
+    store().setSelection({ row: 4, col: 0 }, { row: 5, col: 0 })
+    store().fillFrom({ r0: 4, c0: 0, r1: 5, c1: 0 }, { r0: 2, c0: 0, r1: 5, c1: 0 })
+    expect([valueOf('A4'), valueOf('A3')]).toEqual([4, 3])
+  })
+
+  it('undo で元に戻る', () => {
+    setCell('A1', '1')
+    setCell('A2', '2')
+    store().fillFrom({ r0: 0, c0: 0, r1: 1, c1: 0 }, { r0: 0, c0: 0, r1: 3, c1: 0 })
+    expect(valueOf('A3')).toBe(3)
+    store().undo()
+    expect(valueOf('A3')).toBeNull()
+  })
+})

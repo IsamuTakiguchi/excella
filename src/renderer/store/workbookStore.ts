@@ -35,6 +35,7 @@ import {
   type WorkbookModel,
 } from '@shared/model'
 import { formatCellValue } from '@shared/numberFormat'
+import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
 import { bridge } from '../bridge'
 import { Engine, type DisplayValue } from '../engine/hf'
@@ -117,6 +118,11 @@ type Actions = {
   deleteColumns(index: number, amount: number): void
   /** columnOffset は選択範囲の左端からの相対列。skipHeader で先頭行を除外する */
   sortSelection(columnOffset: number, ascending: boolean, skipHeader?: boolean): void
+  /**
+   * フィルハンドルのドラッグ結果を適用する。
+   * source が元の選択範囲、target がドラッグで広げた先の範囲。
+   */
+  fillFrom(source: Range, target: Range): void
   /** 選択範囲を結合する（左上以外の内容は破棄）。すでに結合済みなら解除する */
   toggleMerge(): void
   /** アクティブセルの左上でウィンドウ枠を固定する。固定済みなら解除する */
@@ -674,6 +680,102 @@ export const useStore = create<Store>((set, get) => {
         syncCellsFromEngine(sheet, engine)
       })
       set({ statusMessage: `${colToLetter(sortCol)} 列で並べ替えました` })
+    },
+
+    fillFrom: (source, target) => {
+      // 下方向・右方向のどちらに伸ばしたのかを決める
+      const down = target.r1 > source.r1
+      const up = target.r0 < source.r0
+      const right = target.c1 > source.c1
+      const left = target.c0 < source.c0
+      if (!down && !up && !right && !left) return
+      const axis: 'row' | 'col' = down || up ? 'row' : 'col'
+
+      mutate((model, engine) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        const write = (addr: Addr, data: CellData | null) => {
+          const key = addrToA1(addr)
+          if (data === null) delete sheet.cells[key]
+          else sheet.cells[key] = data
+        }
+
+        if (axis === 'row') {
+          const height = rangeRows(source)
+          const count = down ? target.r1 - source.r1 : source.r0 - target.r0
+          for (let c = source.c0; c <= source.c1; c++) {
+            const column: Array<CellData | null> = []
+            for (let r = source.r0; r <= source.r1; r++) {
+              column.push(sheet.cells[addrToA1({ row: r, col: c })] ?? null)
+            }
+            const ordered = down ? column : [...column].reverse()
+            const filled = fillSeries(ordered, count, 'row', (i) =>
+              down ? height + i : -(height + i),
+            )
+            filled.forEach((data, i) => {
+              const row = down ? source.r1 + 1 + i : source.r0 - 1 - i
+              write({ row, col: c }, data)
+              const srcStyle =
+                sheet.styles[
+                  addrToA1({
+                    row: down ? source.r0 + (i % height) : source.r1 - (i % height),
+                    col: c,
+                  })
+                ]
+              const key = addrToA1({ row, col: c })
+              if (srcStyle) sheet.styles[key] = structuredClone(srcStyle)
+              else delete sheet.styles[key]
+            })
+          }
+        } else {
+          const width = rangeCols(source)
+          const count = right ? target.c1 - source.c1 : source.c0 - target.c0
+          for (let r = source.r0; r <= source.r1; r++) {
+            const row: Array<CellData | null> = []
+            for (let c = source.c0; c <= source.c1; c++) {
+              row.push(sheet.cells[addrToA1({ row: r, col: c })] ?? null)
+            }
+            const ordered = right ? row : [...row].reverse()
+            const filled = fillSeries(ordered, count, 'col', (i) =>
+              right ? width + i : -(width + i),
+            )
+            filled.forEach((data, i) => {
+              const col = right ? source.c1 + 1 + i : source.c0 - 1 - i
+              write({ row: r, col }, data)
+              const srcStyle =
+                sheet.styles[
+                  addrToA1({
+                    row: r,
+                    col: right ? source.c0 + (i % width) : source.c1 - (i % width),
+                  })
+                ]
+              const key = addrToA1({ row: r, col })
+              if (srcStyle) sheet.styles[key] = structuredClone(srcStyle)
+              else delete sheet.styles[key]
+            })
+          }
+        }
+
+        growSheet(sheet, target.r1, target.c1)
+
+        // エンジンには広げた範囲をまとめて書き戻す
+        const block: Array<Array<string | number | boolean | null>> = []
+        for (let r = target.r0; r <= target.r1; r++) {
+          const out: Array<string | number | boolean | null> = []
+          for (let c = target.c0; c <= target.c1; c++) {
+            const data = sheet.cells[addrToA1({ row: r, col: c })]
+            out.push(data === undefined ? null : (data.f ?? data.v ?? null))
+          }
+          block.push(out)
+        }
+        engine.setBlock(model.activeSheetId, { row: target.r0, col: target.c0 }, block)
+      })
+
+      set({
+        selection: {
+          anchor: { row: target.r0, col: target.c0 },
+          focus: { row: target.r1, col: target.c1 },
+        },
+      })
     },
 
     toggleMerge: () => {

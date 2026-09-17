@@ -13,12 +13,13 @@ import {
   sizeOf,
   totalSize,
 } from './geometry'
-import { cellFontOf, paint } from './painter'
+import { cellFontOf, FILL_HANDLE_SIZE, paint } from './painter'
 import { CellEditor } from './CellEditor'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
   | { kind: 'select' }
+  | { kind: 'fill'; source: Range }
   | { kind: 'select-col' }
   | { kind: 'select-row' }
   | {
@@ -43,6 +44,24 @@ type ResizeSnapshot = {
   rowHeights: Record<number, number>
 }
 
+/**
+ * フィルのドラッグ位置から、伸ばす範囲を決める。
+ * Excel と同じく、縦と横のうち動かした量が大きい方だけに伸ばす。
+ */
+function fillTargetOf(source: Range, addr: Addr): Range {
+  const dDown = addr.row - source.r1
+  const dUp = source.r0 - addr.row
+  const dRight = addr.col - source.c1
+  const dLeft = source.c0 - addr.col
+  const vertical = Math.max(dDown, dUp, 0)
+  const horizontal = Math.max(dRight, dLeft, 0)
+  if (vertical === 0 && horizontal === 0) return source
+  if (vertical >= horizontal) {
+    return dDown >= dUp ? { ...source, r1: addr.row } : { ...source, r0: addr.row }
+  }
+  return dRight >= dLeft ? { ...source, c1: addr.col } : { ...source, c0: addr.col }
+}
+
 export function SheetCanvas(): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -50,8 +69,11 @@ export function SheetCanvas(): React.JSX.Element {
 
   const [viewport, setViewport] = useState({ width: 800, height: 600 })
   const [scroll, setScroll] = useState({ x: 0, y: 0 })
-  const [cursor, setCursor] = useState<'default' | 'col-resize' | 'row-resize'>('default')
+  const [cursor, setCursor] = useState<'default' | 'col-resize' | 'row-resize' | 'crosshair'>(
+    'default',
+  )
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [fillPreview, setFillPreview] = useState<Range | null>(null)
 
   const revision = useStore((s) => s.revision)
   const selection = useStore((s) => s.selection)
@@ -128,8 +150,21 @@ export function SheetCanvas(): React.JSX.Element {
       marquee: clipboard && clipboard.origin.sheetId === sheet.id ? clipboard.origin.range : null,
       merges,
       frozen: sheet.frozen,
+      fillPreview,
     })
-  }, [revision, selection, editing, clipboard, scroll, viewport, cols, rows, sheet, merges])
+  }, [
+    revision,
+    selection,
+    editing,
+    clipboard,
+    scroll,
+    viewport,
+    cols,
+    rows,
+    sheet,
+    merges,
+    fillPreview,
+  ])
 
   // --- アクティブセルを可視域に入れる -----------------------------------
   useEffect(() => {
@@ -240,6 +275,15 @@ export function SheetCanvas(): React.JSX.Element {
     rowHeights: { ...sheet.rowHeights },
   })
 
+  /** 選択範囲の右下のフィルハンドルを掴んだか */
+  const isOnFillHandle = (x: number, y: number): boolean => {
+    const sel = useStore.getState().selectionRange()
+    const hx = offsetOf(cols, sel.c1 + 1)
+    const hy = offsetOf(rows, sel.r1 + 1)
+    const half = FILL_HANDLE_SIZE
+    return Math.abs(x - hx) <= half && Math.abs(y - hy) <= half
+  }
+
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return
     const store = useStore.getState()
@@ -248,6 +292,12 @@ export function SheetCanvas(): React.JSX.Element {
 
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)
+
+    if (zone === 'body' && isOnFillHandle(x, y)) {
+      dragRef.current = { kind: 'fill', source: store.selectionRange() }
+      setFillPreview(store.selectionRange())
+      return
+    }
 
     if (zone === 'corner') {
       store.selectAll()
@@ -299,6 +349,7 @@ export function SheetCanvas(): React.JSX.Element {
       const { zone, x, y } = zoneOf(e.clientX, e.clientY)
       if (zone === 'col-header' && borderHit(cols, x) !== null) setCursor('col-resize')
       else if (zone === 'row-header' && borderHit(rows, y) !== null) setCursor('row-resize')
+      else if (zone === 'body' && isOnFillHandle(x, y)) setCursor('crosshair')
       else setCursor('default')
       return
     }
@@ -315,6 +366,10 @@ export function SheetCanvas(): React.JSX.Element {
     }
 
     const addr = toAddr(e.clientX, e.clientY)
+    if (drag.kind === 'fill') {
+      setFillPreview(fillTargetOf(drag.source, addr))
+      return
+    }
     if (drag.kind === 'select') store.setSelection(store.selection.anchor, addr)
     else if (drag.kind === 'select-col') store.selectColumn(addr.col, true)
     else if (drag.kind === 'select-row') store.selectRow(addr.row, true)
@@ -325,6 +380,11 @@ export function SheetCanvas(): React.JSX.Element {
     dragRef.current = null
     if (drag && (drag.kind === 'resize-col' || drag.kind === 'resize-row')) {
       useStore.getState().commitResize(drag.before)
+    }
+    if (drag?.kind === 'fill') {
+      const target = fillPreview
+      setFillPreview(null)
+      if (target) useStore.getState().fillFrom(drag.source, target)
     }
   }
 

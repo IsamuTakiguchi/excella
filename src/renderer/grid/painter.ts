@@ -34,7 +34,12 @@ export type PaintContext = {
   merges?: Range[]
   /** ウィンドウ枠の固定（先頭から何行・何列を固定するか） */
   frozen?: { rows: number; cols: number }
+  /** フィルハンドルのドラッグ中に示す、伸ばそうとしている範囲 */
+  fillPreview?: Range | null
 }
+
+/** フィルハンドル（選択範囲の右下の四角）の一辺の長さ（px） */
+export const FILL_HANDLE_SIZE = 7
 
 const COLORS = {
   gridLine: '#d9dde3',
@@ -338,6 +343,26 @@ function paintPane(p: PaintContext, pane: Pane): void {
         h: sizeOf(p.rows, p.active.row),
       }
   ctx.strokeRect(activeRect.x + 0.5, activeRect.y + 0.5, activeRect.w - 1, activeRect.h - 1)
+
+  // フィルハンドル（右下の小さな四角）
+  ctx.fillStyle = COLORS.selectionBorder
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 1
+  const hx = selX + selW - FILL_HANDLE_SIZE / 2 - 1
+  const hy = selY + selH - FILL_HANDLE_SIZE / 2 - 1
+  ctx.fillRect(hx, hy, FILL_HANDLE_SIZE, FILL_HANDLE_SIZE)
+  ctx.strokeRect(hx - 0.5, hy - 0.5, FILL_HANDLE_SIZE + 1, FILL_HANDLE_SIZE + 1)
+
+  // フィルのドラッグ中に伸ばす範囲を示す
+  if (p.fillPreview) {
+    const rect = rectOf(p, p.fillPreview)
+    ctx.save()
+    ctx.setLineDash([3, 2])
+    ctx.strokeStyle = COLORS.selectionBorder
+    ctx.lineWidth = 1
+    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1)
+    ctx.restore()
+  }
 
   // コピー中の点線枠
   if (p.marquee) {
