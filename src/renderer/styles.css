@@ -285,3 +285,17 @@ body,
   color: #8a5a00;
   font-size: 12px;
 }
+
+.toolbar .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolbar .checkbox input {
+  margin: 0;
+}

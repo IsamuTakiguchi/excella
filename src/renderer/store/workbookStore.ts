@@ -113,7 +113,8 @@ type Actions = {
   deleteRows(index: number, amount: number): void
   insertColumns(index: number, amount: number): void
   deleteColumns(index: number, amount: number): void
-  sortSelection(columnOffset: number, ascending: boolean): void
+  /** columnOffset は選択範囲の左端からの相対列。skipHeader で先頭行を除外する */
+  sortSelection(columnOffset: number, ascending: boolean, skipHeader?: boolean): void
   /** 選択範囲を結合する（左上以外の内容は破棄）。すでに結合済みなら解除する */
   toggleMerge(): void
   /** アクティブセルの左上でウィンドウ枠を固定する。固定済みなら解除する */
@@ -612,9 +613,10 @@ export const useStore = create<Store>((set, get) => {
       })
     },
 
-    sortSelection: (columnOffset, ascending) => {
+    sortSelection: (columnOffset, ascending, skipHeader = false) => {
       const state = get()
-      const range = state.selectionRange()
+      const full = state.selectionRange()
+      const range = skipHeader ? { ...full, r0: full.r0 + 1 } : full
       if (rangeRows(range) < 2) {
         set({ statusMessage: '並べ替えるには 2 行以上を選択してください' })
         return

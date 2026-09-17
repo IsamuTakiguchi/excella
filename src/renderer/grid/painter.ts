@@ -53,6 +53,11 @@ const COLORS = {
 const FONT_FAMILY =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif'
 
+/** セルのフォント指定。自動調整の計測でも同じものを使う */
+export function cellFontOf(style: CellStyle | undefined): string {
+  return cellFont(style)
+}
+
 function cellFont(style: CellStyle | undefined): string {
   const size = style?.fontSize ?? DEFAULT_FONT_SIZE
   const weight = style?.bold ? '600' : '400'

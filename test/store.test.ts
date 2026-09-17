@@ -427,3 +427,30 @@ describe('ウィンドウ枠の固定', () => {
     expect(store().activeSheet().frozen).toBeUndefined()
   })
 })
+
+describe('並べ替えの列指定とヘッダ除外', () => {
+  it('任意の列を基準にできる', () => {
+    setCell('A1', 'x')
+    setCell('B1', '3')
+    setCell('A2', 'y')
+    setCell('B2', '1')
+    setCell('A3', 'z')
+    setCell('B3', '2')
+    store().setSelection({ row: 0, col: 0 }, { row: 2, col: 1 })
+    store().sortSelection(1, true) // B 列で昇順
+    expect([valueOf('B1'), valueOf('B2'), valueOf('B3')]).toEqual([1, 2, 3])
+    expect([valueOf('A1'), valueOf('A2'), valueOf('A3')]).toEqual(['y', 'z', 'x'])
+    expect(store().statusMessage).toBe('B 列で並べ替えました')
+  })
+
+  it('先頭行を見出しとして除外できる', () => {
+    setCell('A1', '見出し')
+    setCell('A2', '3')
+    setCell('A3', '1')
+    setCell('A4', '2')
+    store().setSelection({ row: 0, col: 0 }, { row: 3, col: 0 })
+    store().sortSelection(0, true, true)
+    expect(valueOf('A1')).toBe('見出し')
+    expect([valueOf('A2'), valueOf('A3'), valueOf('A4')]).toEqual([1, 2, 3])
+  })
+})

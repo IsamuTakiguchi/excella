@@ -3,6 +3,7 @@ import { a1ToRange, findMerge, type Addr, type Range } from '@shared/a1'
 import { DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT } from '@shared/model'
 import { useStore } from '../store/workbookStore'
 import {
+  autofitWidth,
   borderHit,
   buildSizes,
   HEADER_H,
@@ -12,7 +13,7 @@ import {
   sizeOf,
   totalSize,
 } from './geometry'
-import { paint } from './painter'
+import { cellFontOf, paint } from './painter'
 import { CellEditor } from './CellEditor'
 
 type DragState =
@@ -212,6 +213,25 @@ export function SheetCanvas(): React.JSX.Element {
     [cols, rows, sheet.merges, toGrid],
   )
 
+  /** 列の内容に合わせた幅を計算する（ヘッダ境界のダブルクリック用） */
+  const autofitColumn = useCallback(
+    (col: number): number => {
+      const ctx = canvasRef.current?.getContext('2d')
+      const state = useStore.getState()
+      if (!ctx) return DEFAULT_COL_WIDTH
+      return autofitWidth(sheet.rowCount, (row) => {
+        const text = state.displayText({ row, col })
+        if (!text) return 0
+        ctx.save()
+        ctx.font = cellFontOf(state.styleAt({ row, col }))
+        const width = ctx.measureText(text).width
+        ctx.restore()
+        return width
+      })
+    },
+    [sheet.rowCount],
+  )
+
   // --- マウス操作 -------------------------------------------------------
   const snapshotSizes = (): ResizeSnapshot => ({
     colWidths: { ...sheet.colWidths },
@@ -311,7 +331,8 @@ export function SheetCanvas(): React.JSX.Element {
     const store = useStore.getState()
     if (zone === 'col-header') {
       const hit = borderHit(cols, x)
-      if (hit !== null) store.setColWidth(hit, DEFAULT_COL_WIDTH)
+      // Excel と同じく、境界のダブルクリックは内容に合わせた幅にする
+      if (hit !== null) store.setColWidth(hit, autofitColumn(hit))
       return
     }
     if (zone === 'row-header') {

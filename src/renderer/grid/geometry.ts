@@ -69,3 +69,26 @@ export function borderHit(sizes: Sizes, position: number, tolerance = 4): number
   }
   return null
 }
+
+/** 自動調整のときに内容の両側へ足す余白（px） */
+export const AUTOFIT_PADDING = 12
+
+/**
+ * 列の内容に合わせた幅を求める。
+ * 計測は呼び出し側が渡す measure（Canvas の measureText など）に任せ、
+ * この関数自体は純粋に保つ。
+ */
+export function autofitWidth(
+  rowCount: number,
+  measure: (row: number) => number,
+  options: { min?: number; max?: number } = {},
+): number {
+  const min = options.min ?? 40
+  const max = options.max ?? 400
+  let widest = 0
+  for (let row = 0; row < rowCount; row++) {
+    const w = measure(row)
+    if (w > widest) widest = w
+  }
+  return Math.max(min, Math.min(max, Math.ceil(widest + AUTOFIT_PADDING)))
+}

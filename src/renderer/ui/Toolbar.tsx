@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { colToLetter } from '@shared/a1'
 import { NUMBER_FORMATS } from '@shared/numberFormat'
 import { useStore } from '../store/workbookStore'
 
@@ -14,6 +16,11 @@ export function Toolbar(): React.JSX.Element {
 
   const store = () => useStore.getState()
   const range = useStore((s) => s.selectionRange)()
+  const [skipHeader, setSkipHeader] = useState(true)
+
+  // 並べ替えの基準はアクティブセルの列（選択範囲の左端からの相対位置で渡す）
+  const sortOffset = Math.max(0, Math.min(selection.anchor.col - range.c0, range.c1 - range.c0))
+  const sortColumnName = colToLetter(range.c0 + sortOffset)
 
   return (
     <div className="toolbar">
@@ -148,17 +155,25 @@ export function Toolbar(): React.JSX.Element {
 
       <div className="group">
         <button
-          title="選択範囲を左端の列で昇順に並べ替え"
-          onClick={() => store().sortSelection(0, true)}
+          title={`${sortColumnName} 列（アクティブセルの列）で昇順に並べ替え`}
+          onClick={() => store().sortSelection(sortOffset, true, skipHeader)}
         >
           A→Z
         </button>
         <button
-          title="選択範囲を左端の列で降順に並べ替え"
-          onClick={() => store().sortSelection(0, false)}
+          title={`${sortColumnName} 列（アクティブセルの列）で降順に並べ替え`}
+          onClick={() => store().sortSelection(sortOffset, false, skipHeader)}
         >
           Z→A
         </button>
+        <label className="checkbox" title="選択範囲の先頭行を見出しとして並べ替えの対象から外す">
+          <input
+            type="checkbox"
+            checked={skipHeader}
+            onChange={(e) => setSkipHeader(e.target.checked)}
+          />
+          先頭行は見出し
+        </label>
       </div>
     </div>
   )

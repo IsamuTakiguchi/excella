@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  autofitWidth,
+  AUTOFIT_PADDING,
   borderHit,
   buildSizes,
   indexAt,
@@ -53,5 +55,22 @@ describe('borderHit', () => {
     expect(borderHit(sizes, 138)).toBe(1)
     expect(borderHit(sizes, 70)).toBeNull()
     expect(borderHit(sizes, 300)).toBeNull()
+  })
+})
+
+describe('autofitWidth', () => {
+  it('最も広い内容に余白を足した幅を返す', () => {
+    const widths = [30, 120, 60]
+    expect(autofitWidth(3, (row) => widths[row])).toBe(120 + AUTOFIT_PADDING)
+  })
+
+  it('下限と上限で丸める', () => {
+    expect(autofitWidth(1, () => 5)).toBe(40)
+    expect(autofitWidth(1, () => 9999)).toBe(400)
+    expect(autofitWidth(1, () => 5, { min: 10 })).toBe(17)
+  })
+
+  it('空の列でも下限を返す', () => {
+    expect(autofitWidth(0, () => 0)).toBe(40)
   })
 })
