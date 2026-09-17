@@ -454,3 +454,16 @@ describe('並べ替えの列指定とヘッダ除外', () => {
     expect([valueOf('A2'), valueOf('A3'), valueOf('A4')]).toEqual([1, 2, 3])
   })
 })
+
+describe('書式のクリア', () => {
+  it('内容は残して書式だけ消す', () => {
+    setCell('A1', '値')
+    store().setSelection({ row: 0, col: 0 })
+    store().applyStyle({ bold: true, bg: '#FFF3BF' })
+    expect(store().activeSheet().styles['A1']).toBeDefined()
+
+    store().clearStyles()
+    expect(store().activeSheet().styles['A1']).toBeUndefined()
+    expect(valueOf('A1')).toBe('値')
+  })
+})

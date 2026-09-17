@@ -99,6 +99,8 @@ type Actions = {
 
   setCellInput(addr: Addr, text: string): void
   clearSelection(): void
+  /** 選択範囲の書式だけを消す（内容は残す） */
+  clearStyles(): void
   applyStyle(patch: CellStyle, toggle?: boolean): void
   /** record=false はドラッグ中の連続更新用（undo 履歴を積まない） */
   setColWidth(col: number, px: number, record?: boolean): void
@@ -503,6 +505,14 @@ export const useStore = create<Store>((set, get) => {
             delete sheet.cells[addrToA1({ row: r, col: c })]
         }
         engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
+      })
+    },
+
+    clearStyles: () => {
+      const range = get().selectionRange()
+      mutate((model) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        for (const addr of iterRange(range)) delete sheet.styles[addrToA1(addr)]
       })
     },
 

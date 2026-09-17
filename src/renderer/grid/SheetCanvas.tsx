@@ -15,6 +15,7 @@ import {
 } from './geometry'
 import { cellFontOf, paint } from './painter'
 import { CellEditor } from './CellEditor'
+import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
   | { kind: 'select' }
@@ -50,6 +51,7 @@ export function SheetCanvas(): React.JSX.Element {
   const [viewport, setViewport] = useState({ width: 800, height: 600 })
   const [scroll, setScroll] = useState({ x: 0, y: 0 })
   const [cursor, setCursor] = useState<'default' | 'col-resize' | 'row-resize'>('default')
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
   const revision = useStore((s) => s.revision)
   const selection = useStore((s) => s.selection)
@@ -326,6 +328,79 @@ export function SheetCanvas(): React.JSX.Element {
     }
   }
 
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const store = useStore.getState()
+    if (store.editing) store.commitEdit()
+
+    const { zone } = zoneOf(e.clientX, e.clientY)
+    const addr = toAddr(e.clientX, e.clientY)
+
+    // 選択範囲の外を右クリックしたら、そのセルを選び直す
+    const range = store.selectionRange()
+    const inside =
+      addr.row >= range.r0 && addr.row <= range.r1 && addr.col >= range.c0 && addr.col <= range.c1
+    if (zone === 'col-header') store.selectColumn(addr.col, false)
+    else if (zone === 'row-header') store.selectRow(addr.row, false)
+    else if (!inside) store.setSelection(addr)
+
+    const sel = useStore.getState().selectionRange()
+    const rowSpan = sel.r1 - sel.r0 + 1
+    const colSpan = sel.c1 - sel.c0 + 1
+
+    const items: ContextMenuItem[] = [
+      { kind: 'item', label: '切り取り', onSelect: () => void useStore.getState().copy(true) },
+      { kind: 'item', label: 'コピー', onSelect: () => void useStore.getState().copy(false) },
+      {
+        kind: 'item',
+        label: '貼り付け',
+        disabled: useStore.getState().clipboard === null,
+        onSelect: () => useStore.getState().paste(),
+      },
+      { kind: 'separator' },
+      {
+        kind: 'item',
+        label: `${rowSpan} 行を挿入`,
+        onSelect: () => useStore.getState().insertRows(sel.r0, rowSpan),
+      },
+      {
+        kind: 'item',
+        label: `${rowSpan} 行を削除`,
+        onSelect: () => useStore.getState().deleteRows(sel.r0, rowSpan),
+      },
+      {
+        kind: 'item',
+        label: `${colSpan} 列を挿入`,
+        onSelect: () => useStore.getState().insertColumns(sel.c0, colSpan),
+      },
+      {
+        kind: 'item',
+        label: `${colSpan} 列を削除`,
+        onSelect: () => useStore.getState().deleteColumns(sel.c0, colSpan),
+      },
+      { kind: 'separator' },
+      {
+        kind: 'item',
+        label: 'セルを結合／解除',
+        onSelect: () => useStore.getState().toggleMerge(),
+      },
+      {
+        kind: 'item',
+        label: 'ウィンドウ枠の固定／解除',
+        onSelect: () => useStore.getState().toggleFreeze(),
+      },
+      { kind: 'separator' },
+      { kind: 'item', label: '内容をクリア', onSelect: () => useStore.getState().clearSelection() },
+      {
+        kind: 'item',
+        label: '書式をクリア',
+        onSelect: () => useStore.getState().clearStyles(),
+      },
+    ]
+
+    setContextMenu({ x: e.clientX, y: e.clientY, items })
+  }
+
   const onDoubleClick = (e: React.MouseEvent) => {
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const store = useStore.getState()
@@ -450,6 +525,7 @@ export function SheetCanvas(): React.JSX.Element {
       onMouseUp={endDrag}
       onMouseLeave={endDrag}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       onKeyDown={onKeyDown}
       style={{ cursor }}
     >
@@ -460,6 +536,9 @@ export function SheetCanvas(): React.JSX.Element {
         style={{ width: viewport.width, height: viewport.height }}
       />
       <div className="grid-overlay">
+        {contextMenu ? (
+          <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
+        ) : null}
         {editing ? (
           <CellEditor
             editing={editing}
