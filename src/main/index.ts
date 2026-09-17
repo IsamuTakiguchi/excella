@@ -134,6 +134,12 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.applyStyle({ numFmt: '¥#,##0' })
     store.setSelection({ row: 4, col: 0 }, { row: 4, col: 3 })
     store.applyStyle({ bold: true })
+    // 結合セルの見出しを作る
+    store.setCellInput({ row: 6, col: 0 }, '結合したタイトル行')
+    store.setSelection({ row: 6, col: 0 }, { row: 7, col: 3 })
+    store.toggleMerge()
+    store.applyStyle({ bold: true, bg: '#FFF3BF', align: 'center' })
+
     store.setSelection({ row: 4, col: 3 })
     store.displayText({ row: 4, col: 3 })
   `

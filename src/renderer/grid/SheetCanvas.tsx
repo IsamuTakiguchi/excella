@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { makeRange, type Addr } from '@shared/a1'
+import { a1ToRange, findMerge, type Addr, type Range } from '@shared/a1'
 import { DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT } from '@shared/model'
 import { useStore } from '../store/workbookStore'
 import {
@@ -69,6 +69,10 @@ export function SheetCanvas(): React.JSX.Element {
     () => buildSizes(sheet.rowCount, sheet.rowHeights, DEFAULT_ROW_HEIGHT),
     [sheet.rowCount, sheet.rowHeights],
   )
+  const merges = useMemo(
+    () => sheet.merges.map(a1ToRange).filter((r): r is Range => r !== null),
+    [sheet.merges],
+  )
 
   // --- 表示サイズの追従 -------------------------------------------------
   useLayoutEffect(() => {
@@ -98,7 +102,7 @@ export function SheetCanvas(): React.JSX.Element {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     const state = useStore.getState()
-    const range = makeRange(selection.anchor, selection.focus)
+    const range = state.selectionRange()
 
     paint({
       ctx,
@@ -119,8 +123,9 @@ export function SheetCanvas(): React.JSX.Element {
       isNumeric: (row, col) => typeof state.displayValue({ row, col }) === 'number',
       styleAt: (row, col) => state.styleAt({ row, col }),
       marquee: clipboard && clipboard.origin.sheetId === sheet.id ? clipboard.origin.range : null,
+      merges,
     })
-  }, [revision, selection, editing, clipboard, scroll, viewport, cols, rows, sheet])
+  }, [revision, selection, editing, clipboard, scroll, viewport, cols, rows, sheet, merges])
 
   // --- アクティブセルを可視域に入れる -----------------------------------
   useEffect(() => {
@@ -152,9 +157,12 @@ export function SheetCanvas(): React.JSX.Element {
       const rect = el.getBoundingClientRect()
       const x = clientX - rect.left - HEADER_W + el.scrollLeft
       const y = clientY - rect.top - HEADER_H + el.scrollTop
-      return { row: indexAt(rows, y), col: indexAt(cols, x) }
+      const addr = { row: indexAt(rows, y), col: indexAt(cols, x) }
+      // 結合セルの内側をクリックしたら、その左上（マスタ）を指す
+      const merge = findMerge(sheet.merges, addr)
+      return merge ? { row: merge.r0, col: merge.c0 } : addr
     },
-    [cols, rows],
+    [cols, rows, sheet.merges],
   )
 
   const zoneOf = useCallback((clientX: number, clientY: number) => {

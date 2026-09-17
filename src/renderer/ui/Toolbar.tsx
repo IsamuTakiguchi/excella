@@ -135,6 +135,12 @@ export function Toolbar(): React.JSX.Element {
       </div>
 
       <div className="group">
+        <button title="セルを結合／解除" onClick={() => store().toggleMerge()}>
+          ⊞
+        </button>
+      </div>
+
+      <div className="group">
         <button
           title="選択範囲を左端の列で昇順に並べ替え"
           onClick={() => store().sortSelection(0, true)}

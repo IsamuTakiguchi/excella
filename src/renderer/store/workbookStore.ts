@@ -13,10 +13,13 @@ import {
   a1ToAddr,
   a1ToRange,
   colToLetter,
+  expandToMerges,
+  findMerge,
   iterRange,
   makeRange,
   rangeCols,
   rangeRows,
+  rangesOverlap,
   rangeToA1,
   type Addr,
   type Range,
@@ -111,6 +114,8 @@ type Actions = {
   insertColumns(index: number, amount: number): void
   deleteColumns(index: number, amount: number): void
   sortSelection(columnOffset: number, ascending: boolean): void
+  /** 選択範囲を結合する（左上以外の内容は破棄）。すでに結合済みなら解除する */
+  toggleMerge(): void
 
   addSheet(): void
   removeSheet(sheetId: string): void
@@ -343,7 +348,13 @@ export const useStore = create<Store>((set, get) => {
     statusMessage: '',
 
     activeSheet: () => findSheet(get().model, get().model.activeSheetId),
-    selectionRange: () => makeRange(get().selection.anchor, get().selection.focus),
+    selectionRange: () => {
+      const state = get()
+      const range = makeRange(state.selection.anchor, state.selection.focus)
+      const sheet = state.model.sheets.find((s) => s.id === state.model.activeSheetId)
+      // 結合セルに一部でもかかっていたら、その結合全体まで広げる
+      return sheet && sheet.merges.length > 0 ? expandToMerges(sheet.merges, range) : range
+    },
 
     displayValue: (addr) => get().engine.getValue(get().model.activeSheetId, addr),
 
@@ -649,6 +660,70 @@ export const useStore = create<Store>((set, get) => {
         syncCellsFromEngine(sheet, engine)
       })
       set({ statusMessage: `${colToLetter(sortCol)} 列で並べ替えました` })
+    },
+
+    toggleMerge: () => {
+      const state = get()
+      const sheet = state.activeSheet()
+      const range = expandToMerges(sheet.merges, state.selectionRange())
+      const existing = findMerge(sheet.merges, { row: range.r0, col: range.c0 })
+
+      // すでに選択範囲ちょうどが結合されているなら解除
+      const isSame =
+        existing !== null &&
+        existing.r0 === range.r0 &&
+        existing.c0 === range.c0 &&
+        existing.r1 === range.r1 &&
+        existing.c1 === range.c1
+
+      if (isSame) {
+        mutate((model) => {
+          const target = findSheet(model, model.activeSheetId)
+          target.merges = target.merges.filter((m) => m !== rangeToA1(range))
+        })
+        set({ statusMessage: '結合を解除しました' })
+        return
+      }
+
+      if (rangeRows(range) === 1 && rangeCols(range) === 1) {
+        set({ statusMessage: '結合するには 2 つ以上のセルを選択してください' })
+        return
+      }
+
+      mutate((model, engine) => {
+        const target = findSheet(model, model.activeSheetId)
+        // 重なる既存の結合は一度解除してから、選択範囲全体を 1 つの結合にする
+        target.merges = target.merges.filter((m) => {
+          const parsed = a1ToRange(m)
+          return !parsed || !rangesOverlap(parsed, range)
+        })
+        target.merges.push(rangeToA1(range))
+
+        // 左上以外の内容は Excel と同じく破棄する
+        const block: Array<Array<string | number | boolean | null>> = []
+        for (let r = range.r0; r <= range.r1; r++) {
+          const out: Array<string | number | boolean | null> = []
+          for (let c = range.c0; c <= range.c1; c++) {
+            const key = addrToA1({ row: r, col: c })
+            if (r === range.r0 && c === range.c0) {
+              const keep = target.cells[key]
+              out.push(keep === undefined ? null : (keep.f ?? keep.v ?? null))
+              continue
+            }
+            delete target.cells[key]
+            out.push(null)
+          }
+          block.push(out)
+        }
+        engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
+      })
+      set({
+        selection: {
+          anchor: { row: range.r0, col: range.c0 },
+          focus: { row: range.r1, col: range.c1 },
+        },
+        statusMessage: `${rangeToA1(range)} を結合しました`,
+      })
     },
 
     addSheet: () => {

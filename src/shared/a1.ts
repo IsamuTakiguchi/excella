@@ -105,3 +105,44 @@ export function* iterRange(r: Range): Generator<Addr> {
 export function singleRange(addr: Addr): Range {
   return { r0: addr.row, c0: addr.col, r1: addr.row, c1: addr.col }
 }
+
+/** 2 つの範囲が重なっているか */
+export function rangesOverlap(a: Range, b: Range): boolean {
+  return a.r0 <= b.r1 && b.r0 <= a.r1 && a.c0 <= b.c1 && b.c0 <= a.c1
+}
+
+/**
+ * アドレスを含む結合範囲を探す。'A1:B2' の配列を受け取り、
+ * 見つかればその範囲を返す（結合セルのヒットテストと描画で使う）。
+ */
+export function findMerge(merges: string[], addr: Addr): Range | null {
+  for (const text of merges) {
+    const range = a1ToRange(text)
+    if (range && rangeContains(range, addr)) return range
+  }
+  return null
+}
+
+/** 範囲に重なる結合をすべて取り込んだ、より大きな範囲を返す */
+export function expandToMerges(merges: string[], range: Range): Range {
+  let out = range
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const text of merges) {
+      const merge = a1ToRange(text)
+      if (!merge || !rangesOverlap(out, merge)) continue
+      const next = {
+        r0: Math.min(out.r0, merge.r0),
+        c0: Math.min(out.c0, merge.c0),
+        r1: Math.max(out.r1, merge.r1),
+        c1: Math.max(out.c1, merge.c1),
+      }
+      if (next.r0 !== out.r0 || next.c0 !== out.c0 || next.r1 !== out.r1 || next.c1 !== out.c1) {
+        out = next
+        changed = true
+      }
+    }
+  }
+  return out
+}

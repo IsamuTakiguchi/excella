@@ -359,3 +359,52 @@ describe('回帰: 並べ替えのメッセージが列名になる', () => {
     expect(store().statusMessage).toBe('B 列で並べ替えました')
   })
 })
+
+describe('結合セル', () => {
+  it('選択範囲を結合し、左上以外の内容は破棄される', () => {
+    setCell('A1', 'タイトル')
+    setCell('B1', '消える')
+    setCell('B2', '消える')
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().toggleMerge()
+
+    expect(store().activeSheet().merges).toEqual(['A1:B2'])
+    expect(valueOf('A1')).toBe('タイトル')
+    expect(valueOf('B1')).toBeNull()
+    expect(valueOf('B2')).toBeNull()
+  })
+
+  it('同じ範囲をもう一度実行すると解除される', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().toggleMerge()
+    expect(store().activeSheet().merges).toHaveLength(1)
+    store().toggleMerge()
+    expect(store().activeSheet().merges).toEqual([])
+  })
+
+  it('単一セルでは結合しない', () => {
+    store().setSelection({ row: 0, col: 0 })
+    store().toggleMerge()
+    expect(store().activeSheet().merges).toEqual([])
+    expect(store().statusMessage).toContain('2 つ以上')
+  })
+
+  it('結合に一部でもかかった選択は結合全体まで広がる', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 2, col: 2 })
+    store().toggleMerge()
+    // C4 と結合 A1:C3 の一部 C3 を含む選択
+    store().setSelection({ row: 2, col: 2 }, { row: 3, col: 2 })
+    const range = store().selectionRange()
+    expect(range).toEqual({ r0: 0, c0: 0, r1: 3, c1: 2 })
+  })
+
+  it('結合も undo で元に戻る', () => {
+    setCell('B1', 'keep')
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().toggleMerge()
+    expect(valueOf('B1')).toBeNull()
+    store().undo()
+    expect(store().activeSheet().merges).toEqual([])
+    expect(valueOf('B1')).toBe('keep')
+  })
+})

@@ -3,7 +3,7 @@
  * 状態は引数として受け取り、ここでは副作用を持たない（React の外で完結させる）。
  */
 
-import { colToLetter, type Range } from '@shared/a1'
+import { colToLetter, rangeContains, type Range } from '@shared/a1'
 import { DEFAULT_FONT_SIZE, type CellStyle } from '@shared/model'
 import { HEADER_H, HEADER_W, offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
 
@@ -26,6 +26,8 @@ export type PaintContext = {
   styleAt: (row: number, col: number) => CellStyle | undefined
   /** 切り取り・コピー中の点線枠 */
   marquee?: Range | null
+  /** 結合セル。左上のセルの内容を矩形いっぱいに描く */
+  merges?: Range[]
 }
 
 const COLORS = {
@@ -51,6 +53,27 @@ function cellFont(style: CellStyle | undefined): string {
   return `${italic}${weight} ${size}px ${FONT_FAMILY}`
 }
 
+/** 範囲の矩形（セル本体の座標系） */
+function rectOf(p: PaintContext, range: Range): { x: number; y: number; w: number; h: number } {
+  const x = offsetOf(p.cols, range.c0)
+  const y = offsetOf(p.rows, range.r0)
+  return {
+    x,
+    y,
+    w: offsetOf(p.cols, range.c1 + 1) - x,
+    h: offsetOf(p.rows, range.r1 + 1) - y,
+  }
+}
+
+/** そのセルを含む結合範囲。無ければ null */
+function mergeAt(merges: Range[] | undefined, row: number, col: number): Range | null {
+  if (!merges) return null
+  for (const m of merges) {
+    if (rangeContains(m, { row, col })) return m
+  }
+  return null
+}
+
 export function paint(p: PaintContext): void {
   const { ctx, width, height, scrollX, scrollY } = p
 
@@ -71,13 +94,18 @@ export function paint(p: PaintContext): void {
   ctx.clip()
   ctx.translate(HEADER_W - scrollX, HEADER_H - scrollY)
 
-  // 背景色
+  // 背景色。結合セルは左上の書式を矩形いっぱいに広げる
   for (let r = rowRange.first; r <= rowRange.last; r++) {
     for (let c = colRange.first; c <= colRange.last; c++) {
+      const merge = mergeAt(p.merges, r, c)
+      if (merge && (merge.r0 !== r || merge.c0 !== c)) continue
       const style = p.styleAt(r, c)
       if (!style?.bg) continue
       ctx.fillStyle = style.bg
-      ctx.fillRect(offsetOf(p.cols, c), offsetOf(p.rows, r), sizeOf(p.cols, c), sizeOf(p.rows, r))
+      const rect = merge ? rectOf(p, merge) : null
+      if (rect) ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+      else
+        ctx.fillRect(offsetOf(p.cols, c), offsetOf(p.rows, r), sizeOf(p.cols, c), sizeOf(p.rows, r))
     }
   }
 
@@ -108,21 +136,48 @@ export function paint(p: PaintContext): void {
   }
   ctx.stroke()
 
+  // 結合範囲の内側の罫線を消す（背景色があるセルは上で塗り済みなので枠だけ描き直す）
+  if (p.merges) {
+    for (const merge of p.merges) {
+      if (merge.r1 < rowRange.first || merge.r0 > rowRange.last) continue
+      if (merge.c1 < colRange.first || merge.c0 > colRange.last) continue
+      const rect = rectOf(p, merge)
+      const style = p.styleAt(merge.r0, merge.c0)
+      ctx.fillStyle = style?.bg ?? COLORS.cellBg
+      ctx.fillRect(rect.x + 1, rect.y + 1, rect.w - 1, rect.h - 1)
+      ctx.strokeStyle = COLORS.gridLine
+      ctx.lineWidth = 1
+      ctx.strokeRect(
+        Math.floor(rect.x) + 0.5,
+        Math.floor(rect.y) + 0.5,
+        Math.floor(rect.w),
+        Math.floor(rect.h),
+      )
+    }
+  }
+
   // テキスト
   ctx.textBaseline = 'middle'
   for (let r = rowRange.first; r <= rowRange.last; r++) {
     const y = offsetOf(p.rows, r)
     const h = sizeOf(p.rows, r)
     for (let c = colRange.first; c <= colRange.last; c++) {
+      const merge = mergeAt(p.merges, r, c)
+      // 結合の従セルには何も描かない
+      if (merge && (merge.r0 !== r || merge.c0 !== c)) continue
       const text = p.textAt(r, c)
       if (!text) continue
       const style = p.styleAt(r, c)
-      const x = offsetOf(p.cols, c)
-      const w = sizeOf(p.cols, c)
+      const rect = merge ? rectOf(p, merge) : null
+      const x = rect ? rect.x : offsetOf(p.cols, c)
+      const w = rect ? rect.w : sizeOf(p.cols, c)
+
+      const cellY = rect ? rect.y : y
+      const cellH = rect ? rect.h : h
 
       ctx.save()
       ctx.beginPath()
-      ctx.rect(x + 1, y + 1, w - 2, h - 2)
+      ctx.rect(x + 1, cellY + 1, w - 2, cellH - 2)
       ctx.clip()
       ctx.font = cellFont(style)
       ctx.fillStyle = style?.color ?? COLORS.text
@@ -138,11 +193,12 @@ export function paint(p: PaintContext): void {
       } else {
         ctx.textAlign = 'left'
       }
-      ctx.fillText(text, tx, y + h / 2 + 1)
+      ctx.fillText(text, tx, cellY + cellH / 2 + 1)
 
       if (style?.underline) {
         const metrics = ctx.measureText(text)
-        const uy = Math.round(y + h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
+        const uy =
+          Math.round(cellY + cellH / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
         const ux =
           align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
         ctx.strokeStyle = style.color ?? COLORS.text
