@@ -1,0 +1,30 @@
+appId: dev.excella.app
+productName: Excella
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asar: true
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+    - portable
+linux:
+  category: Office
+  target:
+    - AppImage
+    - deb
+fileAssociations:
+  - ext: xlsx
+    name: Excel ブック
+    role: Editor
+  - ext: csv
+    name: CSV
+    role: Editor
