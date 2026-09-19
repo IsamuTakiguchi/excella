@@ -156,9 +156,85 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     return
   }
 
+  if (!(await checkIme(win))) {
+    app.exit(1)
+    return
+  }
+
   await captureIfRequested(win)
   console.log('[smoke] 正常に描画できました')
   app.exit(0)
+}
+
+/**
+ * 日本語入力（IME）が壊れていないかを確かめる。
+ * 変換確定の Enter でセルまで確定してしまう退行は実際に起きたので、
+ * composition イベントを直接流して毎回検査する。
+ */
+async function checkIme(win: BrowserWindow): Promise<boolean> {
+  const script = `
+    (async () => {
+      const store = () => window.__excellaStore.getState()
+      const input = document.querySelector('[data-grid-input]')
+      if (!input) return 'FAIL: 入力欄が無い'
+      const tick = () => new Promise((r) => setTimeout(r, 30))
+      const fireInput = () => input.dispatchEvent(new InputEvent('input', { bubbles: true }))
+
+      // まずスクロールしていない状態で、入力欄がセルの上に重なるかを見る
+      // （オーバーレイがスクロール内容の後ろへ流れる退行の検知）
+      store().setSelection({ row: 0, col: 0 })
+      store().beginEdit({ row: 0, col: 0 })
+      await tick()
+      const box = input.getBoundingClientRect()
+      const grid = document.querySelector('.grid-scroll').getBoundingClientRect()
+      store().cancelEdit()
+      if (box.top < grid.top || box.top > grid.top + 80) {
+        return 'FAIL: 入力欄がセルの位置に無い (top=' + Math.round(box.top - grid.top) + ')'
+      }
+
+      store().setSelection({ row: 40, col: 0 })
+      await tick()
+      if (document.activeElement !== input) return 'FAIL: 入力欄にフォーカスが無い'
+
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      input.value = 'にほんご'
+      fireInput()
+      await tick()
+      if (!store().editing) return 'FAIL: 変換開始で編集モードにならない'
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }),
+      )
+      await tick()
+      if (!store().editing) return 'FAIL: 変換確定の Enter でセルまで確定してしまう'
+
+      input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+      input.value = '日本語'
+      fireInput()
+      await tick()
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: false }),
+      )
+      await tick()
+      if (store().displayValue({ row: 40, col: 0 }) !== '日本語') return 'FAIL: 確定した値が違う'
+      if (store().editing) return 'FAIL: 確定後も編集モードのまま'
+
+      store().undo()
+      return 'OK'
+    })()
+  `
+  try {
+    const result = String(await win.webContents.executeJavaScript(script))
+    if (result !== 'OK') {
+      console.error(`[smoke] 日本語入力の検査に失敗: ${result}`)
+      return false
+    }
+    console.log('[smoke] 日本語入力（IME）の検査に通りました')
+    return true
+  } catch (error) {
+    console.error('[smoke] 日本語入力の検査が例外で落ちました', error)
+    return false
+  }
 }
 
 /** `--screenshot <path>` が渡されていれば画面を PNG で保存する */

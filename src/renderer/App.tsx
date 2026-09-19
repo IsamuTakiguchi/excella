@@ -111,10 +111,10 @@ export function App(): React.JSX.Element {
       if (!mod) return
       const key = e.key.toLowerCase()
       const store = useStore.getState()
-      const inInput =
-        document.activeElement instanceof HTMLInputElement ||
-        document.activeElement instanceof HTMLTextAreaElement
-      if (inInput && key !== 's' && key !== 'o') return
+      // グリッドの入力欄は常にフォーカスを持っているので、
+      // 「入力欄にいるかどうか」ではなく「編集中かどうか」で判断する
+      if (isOtherInput(document.activeElement) && key !== 's' && key !== 'o') return
+      if (store.editing && key !== 's' && key !== 'o') return
 
       switch (key) {
         case 'c':
@@ -157,8 +157,10 @@ export function App(): React.JSX.Element {
   // アプリ内クリップボードにない外部データも貼れるようにする
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const target = e.target
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+      // 数式バーやシート名の入力中はそのまま貼らせる。
+      // グリッドの入力欄は常にフォーカスされているので、編集中かどうかで分ける
+      if (isOtherInput(e.target)) return
+      if (useStore.getState().editing) return
       const text = e.clipboardData?.getData('text/plain') ?? ''
       useStore.getState().paste(text)
       e.preventDefault()
@@ -182,6 +184,13 @@ export function App(): React.JSX.Element {
       <StatusBar />
     </div>
   )
+}
+
+/** グリッドの入力欄以外の、ふつうの入力欄にフォーカスがあるか */
+function isOtherInput(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement))
+    return false
+  return target.dataset.gridInput !== 'true'
 }
 
 async function pasteFromClipboard(): Promise<void> {

@@ -14,7 +14,7 @@ import {
   totalSize,
 } from './geometry'
 import { cellFontOf, FILL_HANDLE_SIZE, paint } from './painter'
-import { CellEditor } from './CellEditor'
+import { CellInput } from './CellInput'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
@@ -269,6 +269,11 @@ export function SheetCanvas(): React.JSX.Element {
     [sheet.rowCount],
   )
 
+  /** セル入力欄へフォーカスを戻す（IME はここで変換する） */
+  const focusInput = () => {
+    document.querySelector<HTMLTextAreaElement>('[data-grid-input]')?.focus()
+  }
+
   // --- マウス操作 -------------------------------------------------------
   const snapshotSizes = (): ResizeSnapshot => ({
     colWidths: { ...sheet.colWidths },
@@ -288,7 +293,7 @@ export function SheetCanvas(): React.JSX.Element {
     if (e.button !== 0) return
     const store = useStore.getState()
     if (store.editing) store.commitEdit()
-    scrollRef.current?.focus()
+    focusInput()
 
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)
@@ -392,6 +397,7 @@ export function SheetCanvas(): React.JSX.Element {
     e.preventDefault()
     const store = useStore.getState()
     if (store.editing) store.commitEdit()
+    focusInput()
 
     const { zone } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)
@@ -556,12 +562,9 @@ export function SheetCanvas(): React.JSX.Element {
       }
       return // コピー・貼り付けなどは App 側のハンドラに任せる
     }
-
-    // 直接入力で上書き編集を始める
-    if (e.key.length === 1 && !e.altKey) {
-      store.beginEdit(store.selection.anchor, e.key)
-      e.preventDefault()
-    }
+    // 印字可能なキーは握りつぶさず入力欄へ流す。
+    // そこで onInput / compositionstart が拾って編集を始めるので、
+    // 半角英数でも日本語でも同じ経路になる
   }
 
   // 固定領域は常に表示されるので、その分だけスクロール範囲を広げないと
@@ -570,44 +573,46 @@ export function SheetCanvas(): React.JSX.Element {
   const frozenH = offsetOf(rows, Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount))
   const totalW = totalSize(cols) + HEADER_W + frozenW
   const totalH = totalSize(rows) + HEADER_H + frozenH
+  // 入力欄はアクティブセルの上に置く。IME の変換候補もここに出る
+  const inputAddr = editing ? editing.addr : selection.anchor
 
   return (
-    <div
-      ref={scrollRef}
-      className="grid-scroll"
-      tabIndex={0}
-      onScroll={(e) => {
-        const el = e.currentTarget
-        setScroll({ x: el.scrollLeft, y: el.scrollTop })
-      }}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={endDrag}
-      onMouseLeave={endDrag}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      onKeyDown={onKeyDown}
-      style={{ cursor }}
-    >
-      <div className="grid-spacer" style={{ width: totalW, height: totalH }} />
-      <canvas
-        ref={canvasRef}
-        className="grid-canvas"
-        style={{ width: viewport.width, height: viewport.height }}
-      />
+    // オーバーレイはスクロール内容の外に置く。中に入れると通常フローで
+    // canvas の下へ流れてしまい、編集中の入力欄がグリッドの外に出る
+    <div className="grid-wrap" onKeyDown={onKeyDown}>
+      <div
+        ref={scrollRef}
+        className="grid-scroll"
+        onScroll={(e) => {
+          const el = e.currentTarget
+          setScroll({ x: el.scrollLeft, y: el.scrollTop })
+        }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
+        onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
+        style={{ cursor }}
+      >
+        <div className="grid-spacer" style={{ width: totalW, height: totalH }} />
+        <canvas
+          ref={canvasRef}
+          className="grid-canvas"
+          style={{ width: viewport.width, height: viewport.height }}
+        />
+      </div>
       <div className="grid-overlay">
         {contextMenu ? (
           <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
         ) : null}
-        {editing ? (
-          <CellEditor
-            editing={editing}
-            left={HEADER_W + offsetOf(cols, editing.addr.col) - scroll.x}
-            top={HEADER_H + offsetOf(rows, editing.addr.row) - scroll.y}
-            width={sizeOf(cols, editing.addr.col)}
-            height={sizeOf(rows, editing.addr.row)}
-          />
-        ) : null}
+        <CellInput
+          editing={editing}
+          left={HEADER_W + offsetOf(cols, inputAddr.col) - scroll.x}
+          top={HEADER_H + offsetOf(rows, inputAddr.row) - scroll.y}
+          width={sizeOf(cols, inputAddr.col)}
+          height={sizeOf(rows, inputAddr.row)}
+        />
       </div>
     </div>
   )
