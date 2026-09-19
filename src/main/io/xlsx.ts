@@ -2,7 +2,8 @@
  * ExcelJS を使った .xlsx ⇄ WorkbookModel の変換。main プロセスでのみ動く。
  *
  * 対応：シート・値・数式・太字/斜体/下線・フォント色/サイズ・塗り・配置・表示形式・
- *       列幅・行高・結合セル・ウィンドウ枠の固定。
+ *       罫線・列幅・行高・結合セル・ウィンドウ枠の固定。
+ *       罫線は実線 3 段階に寄せる（点線や二重線は近い太さの実線になる）。
  * 非対応（読み込み時に捨てる）：マクロ、グラフ、ピボット、条件付き書式、
  *       データ検証、画像、コメント、定義名。
  */
@@ -13,7 +14,11 @@ import {
   createSheet,
   DEFAULT_COL_COUNT,
   DEFAULT_ROW_COUNT,
+  isEmptyBorders,
   isEmptyStyle,
+  type BorderSide,
+  type BorderWeight,
+  type CellBorders,
   type CellStyle,
   type HorizontalAlign,
   type SheetModel,
@@ -42,6 +47,56 @@ function hexToArgb(hex: string | undefined): string | undefined {
   return `FF${h.toUpperCase()}`
 }
 
+/** ExcelJS の罫線スタイルを、こちらの 3 段階の太さに寄せる */
+const BORDER_STYLE_TO_WEIGHT: Record<string, BorderWeight> = {
+  hair: 'thin',
+  thin: 'thin',
+  dotted: 'thin',
+  dashed: 'thin',
+  medium: 'medium',
+  mediumDashed: 'medium',
+  double: 'medium',
+  thick: 'thick',
+}
+
+const WEIGHT_TO_BORDER_STYLE: Record<BorderWeight, ExcelJS.BorderStyle> = {
+  thin: 'thin',
+  medium: 'medium',
+  thick: 'thick',
+}
+
+function readBorderSide(border: Partial<ExcelJS.Border> | undefined): BorderSide | undefined {
+  if (!border?.style) return undefined
+  const weight = BORDER_STYLE_TO_WEIGHT[border.style] ?? 'thin'
+  const color = argbToHex(typeof border.color === 'object' ? border.color?.argb : undefined)
+  const side: BorderSide = { weight }
+  if (color && color !== '#000000') side.color = color
+  return side
+}
+
+function readBorders(cell: ExcelJS.Cell): CellBorders | undefined {
+  const b = cell.border
+  if (!b) return undefined
+  const borders: CellBorders = {}
+  const top = readBorderSide(b.top)
+  const right = readBorderSide(b.right)
+  const bottom = readBorderSide(b.bottom)
+  const left = readBorderSide(b.left)
+  if (top) borders.top = top
+  if (right) borders.right = right
+  if (bottom) borders.bottom = bottom
+  if (left) borders.left = left
+  return isEmptyBorders(borders) ? undefined : borders
+}
+
+function writeBorderSide(side: BorderSide | undefined): Partial<ExcelJS.Border> | undefined {
+  if (!side) return undefined
+  const out: Partial<ExcelJS.Border> = { style: WEIGHT_TO_BORDER_STYLE[side.weight] }
+  const argb = hexToArgb(side.color)
+  if (argb) out.color = { argb }
+  return out
+}
+
 function readStyle(cell: ExcelJS.Cell): CellStyle {
   const style: CellStyle = {}
   const font = cell.font
@@ -65,6 +120,8 @@ function readStyle(cell: ExcelJS.Cell): CellStyle {
     style.align = align as HorizontalAlign
   }
   if (cell.numFmt && cell.numFmt !== 'General') style.numFmt = cell.numFmt
+  const borders = readBorders(cell)
+  if (borders) style.borders = borders
   return style
 }
 
@@ -198,6 +255,18 @@ export async function xlsxFromWorkbook(
       }
       if (style.align) cell.alignment = { horizontal: style.align }
       if (style.numFmt) cell.numFmt = style.numFmt
+      if (style.borders) {
+        const border: Partial<ExcelJS.Borders> = {}
+        const top = writeBorderSide(style.borders.top)
+        const right = writeBorderSide(style.borders.right)
+        const bottom = writeBorderSide(style.borders.bottom)
+        const left = writeBorderSide(style.borders.left)
+        if (top) border.top = top
+        if (right) border.right = right
+        if (bottom) border.bottom = bottom
+        if (left) border.left = left
+        if (Object.keys(border).length > 0) cell.border = border as ExcelJS.Borders
+      }
     }
 
     for (const [index, px] of Object.entries(sheet.colWidths)) {

@@ -12,6 +12,31 @@ export type CellData = {
 
 export type HorizontalAlign = 'left' | 'center' | 'right'
 
+/** 罫線の太さ。xlsx の thin / medium / thick に対応する */
+export type BorderWeight = 'thin' | 'medium' | 'thick'
+
+export type BorderSide = {
+  weight: BorderWeight
+  /** '#RRGGBB'。省略時は既定の黒 */
+  color?: string
+}
+
+/** セルの四辺の罫線。辺が無ければ罫線なし */
+export type CellBorders = {
+  top?: BorderSide
+  right?: BorderSide
+  bottom?: BorderSide
+  left?: BorderSide
+}
+
+export const BORDER_DEFAULT_COLOR = '#000000'
+
+export const BORDER_WIDTH_PX: Record<BorderWeight, number> = {
+  thin: 1,
+  medium: 2,
+  thick: 3,
+}
+
 export type CellStyle = {
   bold?: boolean
   italic?: boolean
@@ -25,6 +50,8 @@ export type CellStyle = {
   numFmt?: string
   /** pt 単位 */
   fontSize?: number
+  /** 四辺の罫線 */
+  borders?: CellBorders
 }
 
 export type SheetModel = {
@@ -86,7 +113,18 @@ export function createWorkbook(): WorkbookModel {
 /** 空オブジェクトになった書式を落とす（保存サイズと差分を小さく保つ） */
 export function isEmptyStyle(style: CellStyle | undefined): boolean {
   if (!style) return true
-  return Object.values(style).every((v) => v === undefined)
+  return Object.entries(style).every(([key, value]) => {
+    if (value === undefined) return true
+    // borders は中身が空になっていることがある
+    if (key === 'borders') return isEmptyBorders(value as CellBorders)
+    return false
+  })
+}
+
+/** 四辺とも罫線が無いか */
+export function isEmptyBorders(borders: CellBorders | undefined): boolean {
+  if (!borders) return true
+  return !borders.top && !borders.right && !borders.bottom && !borders.left
 }
 
 /** セルが空（内容なし）か */

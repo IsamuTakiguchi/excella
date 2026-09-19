@@ -140,6 +140,14 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.toggleMerge()
     store.applyStyle({ bold: true, bg: '#FFF3BF', align: 'center' })
 
+    // 表に罫線を引く（外枠は太線、内側は細線）
+    store.setSelection({ row: 0, col: 0 }, { row: 4, col: 3 })
+    store.applyBorders('inner', { weight: 'thin' })
+    store.applyBorders('outer', { weight: 'thick' })
+    // 見出し行の下だけ色付きの中線にする
+    store.setSelection({ row: 0, col: 0 }, { row: 0, col: 3 })
+    store.applyBorders('bottom', { weight: 'medium', color: '#266DD3' })
+
     // 見出し行を 1 行だけ固定し、合計セルを選んだ状態にする
     store.setSelection({ row: 1, col: 0 })
     store.toggleFreeze()
@@ -219,7 +227,13 @@ async function checkIme(win: BrowserWindow): Promise<boolean> {
       if (store().displayValue({ row: 40, col: 0 }) !== '日本語') return 'FAIL: 確定した値が違う'
       if (store().editing) return 'FAIL: 確定後も編集モードのまま'
 
+      // 後片付け：検査で入れた値と選択位置を元へ戻す
       store().undo()
+      store().setSelection({ row: 4, col: 3 })
+      await tick()
+      // 検査でスクロールしたぶんを戻す（このあとのスクリーンショット用）
+      document.querySelector('.grid-scroll').scrollTo({ top: 0, left: 0 })
+      await tick()
       return 'OK'
     })()
   `

@@ -28,12 +28,15 @@ import { parseCsv, stringifyCsv } from '@shared/csv'
 import {
   createSheet,
   createWorkbook,
+  isEmptyBorders,
   isEmptyStyle,
+  type BorderSide,
   type CellData,
   type CellStyle,
   type SheetModel,
   type WorkbookModel,
 } from '@shared/model'
+import { applyPreset, positionIn, type BorderPreset } from '@shared/borders'
 import { formatCellValue } from '@shared/numberFormat'
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
@@ -103,6 +106,8 @@ type Actions = {
   /** 選択範囲の書式だけを消す（内容は残す） */
   clearStyles(): void
   applyStyle(patch: CellStyle, toggle?: boolean): void
+  /** 選択範囲に罫線のプリセットを適用する */
+  applyBorders(preset: BorderPreset, side: BorderSide): void
   /** record=false はドラッグ中の連続更新用（undo 履歴を積まない） */
   setColWidth(col: number, px: number, record?: boolean): void
   setRowHeight(row: number, px: number, record?: boolean): void
@@ -511,6 +516,28 @@ export const useStore = create<Store>((set, get) => {
             delete sheet.cells[addrToA1({ row: r, col: c })]
         }
         engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
+      })
+    },
+
+    applyBorders: (preset, side) => {
+      const range = get().selectionRange()
+      mutate((model) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        for (const addr of iterRange(range)) {
+          const key = addrToA1(addr)
+          const base = sheet.styles[key] ?? {}
+          const borders = applyPreset(
+            base.borders,
+            preset,
+            positionIn(range, addr.row, addr.col),
+            side,
+          )
+          const next: CellStyle = { ...base }
+          if (isEmptyBorders(borders)) delete next.borders
+          else next.borders = borders
+          if (isEmptyStyle(next)) delete sheet.styles[key]
+          else sheet.styles[key] = next
+        }
       })
     },
 

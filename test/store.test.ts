@@ -512,3 +512,46 @@ describe('フィルハンドル', () => {
     expect(valueOf('A3')).toBeNull()
   })
 })
+
+describe('罫線', () => {
+  it('外枠は範囲の縁にだけ付く', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 2, col: 2 })
+    store().applyBorders('outer', { weight: 'thin' })
+    const styles = store().activeSheet().styles
+    expect(styles['A1']?.borders).toEqual({ top: { weight: 'thin' }, left: { weight: 'thin' } })
+    expect(styles['C3']?.borders).toEqual({ bottom: { weight: 'thin' }, right: { weight: 'thin' } })
+    expect(styles['B2']).toBeUndefined() // 内側には付かない
+  })
+
+  it('格子は全セルの四辺に付く', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().applyBorders('all', { weight: 'medium', color: '#C0392B' })
+    const b = store().activeSheet().styles['B2']?.borders
+    expect(b?.top).toEqual({ weight: 'medium', color: '#C0392B' })
+    expect(b?.right).toEqual({ weight: 'medium', color: '#C0392B' })
+  })
+
+  it('罫線なしで消え、書式だけのセルは残らない', () => {
+    store().setSelection({ row: 0, col: 0 })
+    store().applyBorders('all', { weight: 'thin' })
+    expect(store().activeSheet().styles['A1']).toBeDefined()
+    store().applyBorders('none', { weight: 'thin' })
+    expect(store().activeSheet().styles['A1']).toBeUndefined()
+  })
+
+  it('他の書式は保たれる', () => {
+    store().setSelection({ row: 0, col: 0 })
+    store().applyStyle({ bold: true })
+    store().applyBorders('all', { weight: 'thin' })
+    expect(store().activeSheet().styles['A1']?.bold).toBe(true)
+    store().applyBorders('none', { weight: 'thin' })
+    expect(store().activeSheet().styles['A1']).toEqual({ bold: true })
+  })
+
+  it('undo で元に戻る', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().applyBorders('all', { weight: 'thin' })
+    store().undo()
+    expect(store().activeSheet().styles['A1']).toBeUndefined()
+  })
+})

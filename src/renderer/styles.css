@@ -360,3 +360,13 @@ body,
   margin: 4px 2px;
   background: var(--border);
 }
+
+.toolbar .color-input {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
+}

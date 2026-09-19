@@ -94,6 +94,30 @@ describe('xlsx の往復', () => {
     expect(out.cells['A3']).toEqual({ v: '本文' })
   })
 
+  it('罫線が往復する', async () => {
+    const sheet = createSheet('罫線')
+    sheet.cells = { B2: { v: '囲み' } }
+    sheet.styles = {
+      B2: {
+        borders: {
+          top: { weight: 'thin' },
+          bottom: { weight: 'thick' },
+          left: { weight: 'medium', color: '#C0392B' },
+        },
+      },
+    }
+    const path = join(dir, 'borders.xlsx')
+    await xlsxFromWorkbook(path, { version: 1, sheets: [sheet], activeSheetId: sheet.id })
+
+    const loaded = await workbookFromXlsx(path)
+    const borders = loaded.sheets[0].styles['B2']?.borders
+    expect(borders?.top).toEqual({ weight: 'thin' })
+    expect(borders?.bottom).toEqual({ weight: 'thick' })
+    expect(borders?.left).toEqual({ weight: 'medium', color: '#C0392B' })
+    // 引いていない辺は付かない
+    expect(borders?.right).toBeUndefined()
+  })
+
   it('空のブックでも壊れない', async () => {
     const sheet = createSheet('Sheet1')
     const path = join(dir, 'empty.xlsx')

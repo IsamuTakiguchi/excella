@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { colToLetter } from '@shared/a1'
+import { BORDER_PRESETS, BORDER_WEIGHTS } from '@shared/borders'
+import type { BorderWeight } from '@shared/model'
 import { NUMBER_FORMATS } from '@shared/numberFormat'
 import { useStore } from '../store/workbookStore'
 
@@ -17,6 +19,8 @@ export function Toolbar(): React.JSX.Element {
   const store = () => useStore.getState()
   const range = useStore((s) => s.selectionRange)()
   const [skipHeader, setSkipHeader] = useState(true)
+  const [borderWeight, setBorderWeight] = useState<BorderWeight>('thin')
+  const [borderColor, setBorderColor] = useState('#000000')
 
   // 並べ替えの基準はアクティブセルの列（選択範囲の左端からの相対位置で渡す）
   const sortOffset = Math.max(0, Math.min(selection.anchor.col - range.c0, range.c1 - range.c0))
@@ -139,6 +143,39 @@ export function Toolbar(): React.JSX.Element {
         >
           列−
         </button>
+      </div>
+
+      <div className="group">
+        <span className="label">罫線</span>
+        {BORDER_PRESETS.map((item) => (
+          <button
+            key={item.preset}
+            title={item.label}
+            onClick={() =>
+              store().applyBorders(item.preset, { weight: borderWeight, color: borderColor })
+            }
+          >
+            {item.icon}
+          </button>
+        ))}
+        <select
+          title="罫線の太さ"
+          value={borderWeight}
+          onChange={(e) => setBorderWeight(e.target.value as BorderWeight)}
+        >
+          {BORDER_WEIGHTS.map((w) => (
+            <option key={w.weight} value={w.weight}>
+              {w.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="color"
+          className="color-input"
+          title="罫線の色"
+          value={borderColor}
+          onChange={(e) => setBorderColor(e.target.value)}
+        />
       </div>
 
       <div className="group">

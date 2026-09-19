@@ -8,7 +8,13 @@
  */
 
 import { colToLetter, rangeContains, type Range } from '@shared/a1'
-import { DEFAULT_FONT_SIZE, type CellStyle } from '@shared/model'
+import {
+  BORDER_DEFAULT_COLOR,
+  BORDER_WIDTH_PX,
+  DEFAULT_FONT_SIZE,
+  type CellBorders,
+  type CellStyle,
+} from '@shared/model'
 import { HEADER_H, HEADER_W, offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
 
 export type PaintContext = {
@@ -299,6 +305,25 @@ function paintPane(p: PaintContext, pane: Pane): void {
     }
   }
 
+  // 罫線。グリッド線より後に描いて上書きする
+  for (let r = rowRange.first; r <= rowRange.last; r++) {
+    for (let c = colRange.first; c <= colRange.last; c++) {
+      const borders = p.styleAt(r, c)?.borders
+      if (!borders) continue
+      const merge = mergeAt(p.merges, r, c)
+      if (merge && (merge.r0 !== r || merge.c0 !== c)) continue
+      const rect = merge
+        ? rectOf(p, merge)
+        : {
+            x: offsetOf(p.cols, c),
+            y: offsetOf(p.rows, r),
+            w: sizeOf(p.cols, c),
+            h: sizeOf(p.rows, r),
+          }
+      drawBorders(ctx, borders, rect)
+    }
+  }
+
   // テキスト
   ctx.textBaseline = 'middle'
   for (let r = rowRange.first; r <= rowRange.last; r++) {
@@ -376,6 +401,44 @@ function paintPane(p: PaintContext, pane: Pane): void {
   }
 
   ctx.restore()
+}
+
+/** セルの四辺の罫線を描く */
+function drawBorders(
+  ctx: CanvasRenderingContext2D,
+  borders: CellBorders,
+  rect: { x: number; y: number; w: number; h: number },
+): void {
+  const sides = [
+    { side: borders.top, x0: rect.x, y0: rect.y, x1: rect.x + rect.w, y1: rect.y },
+    {
+      side: borders.bottom,
+      x0: rect.x,
+      y0: rect.y + rect.h,
+      x1: rect.x + rect.w,
+      y1: rect.y + rect.h,
+    },
+    { side: borders.left, x0: rect.x, y0: rect.y, x1: rect.x, y1: rect.y + rect.h },
+    {
+      side: borders.right,
+      x0: rect.x + rect.w,
+      y0: rect.y,
+      x1: rect.x + rect.w,
+      y1: rect.y + rect.h,
+    },
+  ]
+  for (const { side, x0, y0, x1, y1 } of sides) {
+    if (!side) continue
+    const width = BORDER_WIDTH_PX[side.weight]
+    ctx.strokeStyle = side.color ?? BORDER_DEFAULT_COLOR
+    ctx.lineWidth = width
+    // 奇数幅の線はピクセルの中心に置くとぼやけないので 0.5 ずらす
+    const shift = width % 2 === 1 ? 0.5 : 0
+    ctx.beginPath()
+    ctx.moveTo(Math.floor(x0) + (x0 === x1 ? shift : 0), Math.floor(y0) + (y0 === y1 ? shift : 0))
+    ctx.lineTo(Math.floor(x1) + (x0 === x1 ? shift : 0), Math.floor(y1) + (y0 === y1 ? shift : 0))
+    ctx.stroke()
+  }
 }
 
 /** 1 セル（または結合範囲）のテキストを描く。呼び出し側で clip / translate 済みであること */
