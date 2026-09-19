@@ -9,15 +9,20 @@ files:
 asar: true
 mac:
   category: public.app-category.productivity
+  icon: build/icon.png
   target:
     - dmg
     - zip
 win:
+  icon: build/icon.ico
   target:
     - nsis
     - portable
 linux:
   category: Office
+  icon: build/icon.png
+  # ウィンドウと .desktop エントリを結び付ける（無いと起動中の窓が紐づかない）
+  syncDesktopName: true
   target:
     - AppImage
     - deb

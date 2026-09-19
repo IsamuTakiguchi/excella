@@ -85,7 +85,21 @@ electron ./out/main/index.js --smoke data.xlsx
 npm run dist         # electron-builder で現在の OS 向けにパッケージング
 ```
 
-macOS / Windows 向けのパッケージはそれぞれの OS 上でのビルドが必要です。
+**3 つの OS 向けをまとめて作るなら GitHub Actions が使えます。**
+`v1.2.3` のようなタグを push すると、macOS / Windows / Linux それぞれの
+ランナーでビルドして Release（下書き）に添付します。手元に Mac が無くても
+macOS 版が作れます。Actions タブの「Run workflow」からビルドだけ試すこともできます。
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+配布物には**コード署名をしていません**。初回起動時に警告が出るので、
+macOS は右クリック →「開く」、Windows は SmartScreen の「詳細情報」→「実行」で回避できます。
+署名するには Apple Developer ID（年額）や Windows のコード署名証明書が必要です。
+
+アイコンは `build/icon.png`（と Windows 用の `build/icon.ico`）に入っています。
+差し替えたいときはこの 2 つを置き換えてください。
 
 ## 構成
 
