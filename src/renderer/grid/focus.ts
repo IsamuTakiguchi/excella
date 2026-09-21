@@ -33,7 +33,12 @@ export function setTouchDeviceForTest(value: boolean | null): void {
  */
 export function focusGrid(): void {
   if (isTouchDevice() && !useStore.getState().editing) return
-  document.querySelector<HTMLTextAreaElement>('[data-grid-input]')?.focus()
+  gridInput()?.focus()
+}
+
+/** セル入力欄の要素。キャレット位置を読むのにも使う */
+export function gridInput(): HTMLTextAreaElement | null {
+  return document.querySelector<HTMLTextAreaElement>('[data-grid-input]')
 }
 
 /** その要素がセル入力欄そのものか */

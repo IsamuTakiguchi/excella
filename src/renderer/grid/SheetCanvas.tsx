@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { a1ToRange, findMerge, type Addr, type Range } from '@shared/a1'
+import { isFormula, parseRefs } from '@shared/formulaRefs'
 import { DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT } from '@shared/model'
 import { useStore } from '../store/workbookStore'
 import {
@@ -13,14 +14,16 @@ import {
   sizeOf,
   totalSize,
 } from './geometry'
-import { cellFontOf, FILL_HANDLE_SIZE, paint } from './painter'
+import { cellFontOf, FILL_HANDLE_SIZE, paint, REF_COLORS } from './painter'
 import { CellInput } from './CellInput'
-import { focusGrid, isGridInput, isTouchDevice } from './focus'
+import { focusGrid, gridInput, isGridInput, isTouchDevice } from './focus'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
   | { kind: 'select' }
   | { kind: 'fill'; source: Range }
+  /** 数式の参照選択（ポイントモード）中のドラッグ */
+  | { kind: 'point' }
   | { kind: 'select-col' }
   | { kind: 'select-row' }
   | {
@@ -79,6 +82,7 @@ export function SheetCanvas(): React.JSX.Element {
   const revision = useStore((s) => s.revision)
   const selection = useStore((s) => s.selection)
   const editing = useStore((s) => s.editing)
+  const pointing = useStore((s) => s.pointing)
   const clipboard = useStore((s) => s.clipboard)
   const model = useStore((s) => s.model)
 
@@ -99,6 +103,26 @@ export function SheetCanvas(): React.JSX.Element {
     () => sheet.merges.map(a1ToRange).filter((r): r is Range => r !== null),
     [sheet.merges],
   )
+
+  /**
+   * 編集中の数式が参照しているセル。Excel と同じく参照ごとに色を変えて囲む。
+   * 参照選択中の参照は差し込み位置（prefix の長さ）で見分けられるので、
+   * 同じ色の点線で「いま動かしている参照」だと分かるようにする。
+   */
+  const { formulaRefs, pointingRef } = useMemo(() => {
+    const refs: Array<{ range: Range; color: string }> = []
+    let pointed: { range: Range; color: string } | null = null
+    if (editing && isFormula(editing.text)) {
+      parseRefs(editing.text).forEach((span, index) => {
+        const range = a1ToRange(span.text)
+        if (!range) return
+        const color = REF_COLORS[index % REF_COLORS.length]
+        refs.push({ range, color })
+        if (pointing && span.start === pointing.prefix.length) pointed = { range, color }
+      })
+    }
+    return { formulaRefs: refs, pointingRef: pointed }
+  }, [editing, pointing])
 
   // --- 表示サイズの追従 -------------------------------------------------
   useLayoutEffect(() => {
@@ -152,6 +176,8 @@ export function SheetCanvas(): React.JSX.Element {
       merges,
       frozen: sheet.frozen,
       fillPreview,
+      formulaRefs,
+      pointing: pointingRef,
     })
   }, [
     revision,
@@ -165,13 +191,16 @@ export function SheetCanvas(): React.JSX.Element {
     sheet,
     merges,
     fillPreview,
+    formulaRefs,
+    pointingRef,
   ])
 
   // --- アクティブセルを可視域に入れる -----------------------------------
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const { row, col } = selection.focus
+    // 参照選択中は、参照しているセルの方を画面内に入れる
+    const { row, col } = pointing ? pointing.focus : selection.focus
     const x0 = offsetOf(cols, col)
     const x1 = x0 + sizeOf(cols, col)
     const y0 = offsetOf(rows, row)
@@ -198,7 +227,7 @@ export function SheetCanvas(): React.JSX.Element {
     if (nextX !== el.scrollLeft || nextY !== el.scrollTop) {
       el.scrollTo({ left: Math.max(0, nextX), top: Math.max(0, nextY) })
     }
-  }, [selection.focus, cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount])
+  }, [selection.focus, pointing, cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount])
 
   // --- 座標変換 ---------------------------------------------------------
 
@@ -292,11 +321,28 @@ export function SheetCanvas(): React.JSX.Element {
     // キャレット移動のために既定動作を残す
     if (!isGridInput(e.target)) e.preventDefault()
     const store = useStore.getState()
-    if (store.editing) store.commitEdit()
     focusGrid()
 
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)
+
+    // 数式の参照選択（ポイントモード）。`=SUM(` まで打った状態でセルを
+    // クリックしたら、確定ではなく参照の差し込みになる（Excel と同じ）。
+    // 参照を差し込めない位置（数式が完成している）ときは、下の通常の処理で確定する
+    if (zone === 'body' && store.editing && isFormula(store.editing.text)) {
+      if (store.pointing) {
+        store.setPointing(addr)
+        dragRef.current = { kind: 'point' }
+        return
+      }
+      const caret = gridInput()?.selectionStart ?? store.editing.text.length
+      if (store.startPointing(addr, caret)) {
+        dragRef.current = { kind: 'point' }
+        return
+      }
+    }
+
+    if (store.editing) store.commitEdit()
 
     if (zone === 'body' && isOnFillHandle(x, y)) {
       dragRef.current = { kind: 'fill', source: store.selectionRange() }
@@ -409,6 +455,11 @@ export function SheetCanvas(): React.JSX.Element {
     }
 
     const addr = toAddr(e.clientX, e.clientY)
+    if (drag.kind === 'point') {
+      const pointed = store.pointing
+      if (pointed) store.setPointing(pointed.anchor, addr)
+      return
+    }
     if (drag.kind === 'fill') {
       setFillPreview(fillTargetOf(drag.source, addr))
       return
@@ -514,6 +565,9 @@ export function SheetCanvas(): React.JSX.Element {
   const onDoubleClick = (e: React.MouseEvent) => {
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const store = useStore.getState()
+    // 参照選択中の 2 度目のクリックは mousedown 側で処理済み。
+    // ここで編集を始め直すと、書きかけの数式が消えてしまう
+    if (store.pointing) return
     if (zone === 'col-header') {
       const hit = borderHit(cols, x)
       // Excel と同じく、境界のダブルクリックは内容に合わせた幅にする
