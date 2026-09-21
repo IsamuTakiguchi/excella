@@ -8,6 +8,8 @@ export function StatusBar(): React.JSX.Element {
   const revision = useStore((s) => s.revision)
   const selection = useStore((s) => s.selection)
   const message = useStore((s) => s.statusMessage)
+  const editing = useStore((s) => s.editing)
+  const pointing = useStore((s) => s.pointing)
   const range = useStore((s) => s.selectionRange)()
 
   const stats = useMemo(() => {
@@ -31,9 +33,16 @@ export function StatusBar(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision, range.r0, range.c0, range.r1, range.c1])
 
+  // Excel と同じく、入力の状態を左端に出す（参照選択中だと分かるように）
+  const modeLabel = (): string => {
+    if (pointing) return '参照'
+    if (!editing) return ''
+    return editing.typing ? '入力' : '編集'
+  }
+
   return (
     <div className="status-bar">
-      <span className="ready">{message || '準備完了'}</span>
+      <span className="ready">{modeLabel() || message || '準備完了'}</span>
       <span className="spacer" />
       {stats.numeric > 0 ? <span>平均: {formatGeneral(stats.sum / stats.numeric)}</span> : null}
       {stats.count > 0 ? <span>データの個数: {stats.count}</span> : null}

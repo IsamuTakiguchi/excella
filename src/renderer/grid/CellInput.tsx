@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Addr } from '@shared/a1'
-import { useStore, type Editing } from '../store/workbookStore'
+import { isFormula } from '@shared/formulaRefs'
+import { pointingText, useStore, type Editing } from '../store/workbookStore'
 import { isTouchDevice } from './focus'
 
 type Props = {
@@ -27,17 +28,24 @@ type Props = {
 export function CellInput({ editing, left, top, width, height }: Props): React.JSX.Element {
   const ref = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
+  const pointing = useStore((s) => s.pointing)
 
   // ストア側の内容を入力欄へ反映する（変換中は触らない）
   useEffect(() => {
     const el = ref.current
     if (!el || composing.current) return
     const next = editing ? editing.text : ''
-    if (el.value !== next) {
-      el.value = next
+    const changed = el.value !== next
+    if (changed) el.value = next
+    if (pointing) {
+      // 参照選択中は、差し込んだ参照の直後にキャレットを置く
+      // （その後ろに文字が残っていても消さない）
+      const caret = pointingText(pointing).caret
+      el.setSelectionRange(caret, caret)
+    } else if (changed) {
       el.setSelectionRange(next.length, next.length)
     }
-  }, [editing])
+  }, [editing, pointing])
 
   // 入力欄は常にフォーカスを持たせておく（IME の変換がここで始まる）。
   // ただしタッチ端末ではフォーカス＝ソフトキーボード表示なので、編集中だけにする
@@ -62,7 +70,8 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
   /** 入力欄の現在値をストアへ送ってから確定する */
   const commit = (move?: { dRow: number; dCol: number }) => {
     const el = ref.current
-    if (el) store().updateEdit(el.value)
+    // 参照選択中はストア側のテキストが正（入力欄への反映は再描画後になるため）
+    if (el && !useStore.getState().pointing) store().updateEdit(el.value)
     store().commitEdit(move)
   }
 
@@ -92,6 +101,28 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
       e.stopPropagation()
       return
     }
+    // 数式の参照選択（ポイントモード）。
+    // `=` で始まる編集中の矢印キーは、確定でもキャレット移動でもなく
+    // 「参照するセルを選ぶ」操作になる（Excel と同じ）
+    if (isFormula(editing.text) && e.key.startsWith('Arrow')) {
+      const dRow = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+      const dCol = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+      if (useStore.getState().pointing) {
+        store().movePointing(dRow, dCol, e.shiftKey)
+      } else {
+        const caret = ref.current?.selectionStart ?? editing.text.length
+        const from = { row: editing.addr.row + dRow, col: editing.addr.col + dCol }
+        // 参照を差し込めない位置（`=A1` の途中など）では、ふつうにキャレットを動かす
+        if (!store().startPointing(from, caret)) {
+          e.stopPropagation()
+          return
+        }
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     // 直接入力で始まった編集は矢印キーで確定する（Excel と同じ挙動）
     if (editing.typing && e.key.startsWith('Arrow')) {
       const dRow = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0

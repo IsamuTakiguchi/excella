@@ -176,6 +176,45 @@ async function main() {
     if (await isInputFocused()) fail('確定後もキーボードが出たまま')
     console.log('[web-smoke] タップ→編集→確定の検査に通りました')
 
+    // 数式の参照選択：`=` を打ってからセルをタップすると、確定ではなく参照が入る
+    const other = { x: cell.x + 88, y: cell.y - 22 * 3 }
+    await page.touchscreen.tap(other.x, other.y)
+    await page.waitForTimeout(150)
+    // どのセルに当たったかはアプリに聞く（座標計算を検査側で作り直さない）
+    const target = await page.evaluate(() => {
+      const a = window.__excellaStore.getState().selection.anchor
+      let n = a.col
+      let letters = ''
+      for (;;) {
+        letters = String.fromCharCode(65 + (n % 26)) + letters
+        n = Math.floor(n / 26) - 1
+        if (n < 0) break
+      }
+      return letters + (a.row + 1)
+    })
+    // 空のセルで編集を始める（中身があると `=` が後ろに付いて数式にならない）
+    const empty = { x: cell.x, y: cell.y + 22 * 2 }
+    await page.touchscreen.tap(empty.x, empty.y)
+    await page.waitForTimeout(150)
+    await page.touchscreen.tap(empty.x, empty.y) // 再タップで編集開始
+    await page.waitForTimeout(150)
+    await page.keyboard.type('=')
+    await page.waitForTimeout(150)
+    await page.touchscreen.tap(other.x, other.y)
+    await page.waitForTimeout(150)
+    const formula = await page.evaluate(
+      () => window.__excellaStore.getState().editing?.text ?? null,
+    )
+    if (formula !== `=${target}`) {
+      fail(`タップで参照が入りません: ${String(formula)}（期待 =${target}）`)
+    }
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+    if (await page.evaluate(() => Boolean(window.__excellaStore.getState().editing))) {
+      fail('Escape で数式の編集が取り消せない')
+    }
+    console.log('[web-smoke] 数式の参照選択（タップ）の検査に通りました')
+
     // 長押しでメニュー
     await longPress(page, cell.x, cell.y)
     await page.waitForTimeout(150)

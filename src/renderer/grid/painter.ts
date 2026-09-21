@@ -42,7 +42,17 @@ export type PaintContext = {
   frozen?: { rows: number; cols: number }
   /** フィルハンドルのドラッグ中に示す、伸ばそうとしている範囲 */
   fillPreview?: Range | null
+  /** 編集中の数式が参照しているセル。参照ごとに色を変えて囲む */
+  formulaRefs?: Array<{ range: Range; color: string }>
+  /** 数式の参照選択（ポイントモード）で今選んでいる参照 */
+  pointing?: { range: Range; color: string } | null
 }
+
+/**
+ * 数式の参照を囲む色。Excel と同じく、出てきた順に色を変えて
+ * どの参照がどのセルなのかを見分けられるようにする。
+ */
+export const REF_COLORS = ['#2b7cd3', '#c0392b', '#7030a0', '#0b8043', '#b8860b']
 
 /** フィルハンドル（選択範囲の右下の四角）の一辺の長さ（px） */
 export const FILL_HANDLE_SIZE = 7
@@ -389,6 +399,27 @@ function paintPane(p: PaintContext, pane: Pane): void {
     ctx.strokeStyle = COLORS.selectionBorder
     ctx.lineWidth = 1
     ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1)
+    ctx.restore()
+  }
+
+  // 編集中の数式が参照しているセル
+  if (p.formulaRefs) {
+    for (const ref of p.formulaRefs) {
+      const rect = rectOf(p, ref.range)
+      ctx.strokeStyle = ref.color
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
+    }
+  }
+
+  // 参照選択中のセル（点線で、動かしている最中だと分かるように）
+  if (p.pointing) {
+    const rect = rectOf(p, p.pointing.range)
+    ctx.save()
+    ctx.setLineDash([4, 3])
+    ctx.strokeStyle = p.pointing.color
+    ctx.lineWidth = 2
+    ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
     ctx.restore()
   }
 

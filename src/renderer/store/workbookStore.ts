@@ -40,6 +40,7 @@ import { applyPreset, positionIn, type BorderPreset } from '@shared/borders'
 import { formatCellValue } from '@shared/numberFormat'
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
+import { canInsertRef } from '@shared/formulaRefs'
 import { bridge } from '../bridge'
 import { Engine, type DisplayValue } from '../engine/hf'
 
@@ -65,6 +66,28 @@ export type Editing = {
   typing: boolean
 } | null
 
+/**
+ * 数式の参照選択（ポイントモード）の状態。
+ *
+ * `= を打ってからカーソルキーやマウスでセルを選ぶ` Excel の入力方法で、
+ * 選んでいるセルは編集テキストの一部として差し込まれる。
+ * 差し込み位置の前後（prefix / suffix）は固定で、真ん中の参照だけが動く。
+ */
+export type Pointing = {
+  /** 参照より前のテキスト（`=SUM(` など） */
+  prefix: string
+  /** 参照より後ろのテキスト（途中に差し込んだときだけ空でない） */
+  suffix: string
+  anchor: Addr
+  focus: Addr
+} | null
+
+/** ポイント中の編集テキストと、参照の直後に置くキャレット位置 */
+export function pointingText(p: NonNullable<Pointing>): { text: string; caret: number } {
+  const ref = rangeToA1(makeRange(p.anchor, p.focus))
+  return { text: p.prefix + ref + p.suffix, caret: p.prefix.length + ref.length }
+}
+
 type State = {
   model: WorkbookModel
   engine: Engine
@@ -72,6 +95,8 @@ type State = {
   revision: number
   selection: { anchor: Addr; focus: Addr }
   editing: Editing
+  /** 数式の参照選択中だけ非 null（編集中のみ） */
+  pointing: Pointing
   clipboard: ClipboardBlock | null
   filePath: string | null
   fileName: string
@@ -100,6 +125,16 @@ type Actions = {
   updateEdit(text: string): void
   commitEdit(move?: { dRow: number; dCol: number }): void
   cancelEdit(): void
+
+  /**
+   * 数式の参照選択を始める。caret の位置に参照を差し込めないときは何もせず false。
+   * 戻り値で「矢印キーをキャレット移動に使うか」を呼び出し側が判断する。
+   */
+  startPointing(addr: Addr, caret: number): boolean
+  /** 参照するセル（範囲）を置き換える。マウスでのクリック・ドラッグ用 */
+  setPointing(anchor: Addr, focus?: Addr): void
+  /** 参照するセルを動かす。extend（Shift）なら範囲として広げる */
+  movePointing(dRow: number, dCol: number, extend: boolean): void
 
   setCellInput(addr: Addr, text: string): void
   clearSelection(): void
@@ -355,6 +390,7 @@ export const useStore = create<Store>((set, get) => {
     revision: 0,
     selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
     editing: null,
+    pointing: null,
     clipboard: null,
     filePath: null,
     fileName: '新しいブック',
@@ -469,6 +505,7 @@ export const useStore = create<Store>((set, get) => {
       const text = initial !== undefined ? initial : get().inputText(addr)
       set({
         editing: { addr, text, typing: initial !== undefined },
+        pointing: null,
         selection: { anchor: addr, focus: addr },
       })
     },
@@ -476,19 +513,67 @@ export const useStore = create<Store>((set, get) => {
     updateEdit: (text) => {
       const editing = get().editing
       if (!editing) return
-      set({ editing: { ...editing, text } })
+      // 自分で文字を打った時点で参照選択は終わる（差し込んだ参照はただの文字列になる）
+      set({ editing: { ...editing, text }, pointing: null })
     },
 
     commitEdit: (move) => {
       const editing = get().editing
       if (!editing) return
       const { addr, text } = editing
-      set({ editing: null })
+      set({ editing: null, pointing: null })
       if (text !== get().inputText(addr)) get().setCellInput(addr, text)
       if (move) get().moveSelection(move.dRow, move.dCol, false)
     },
 
-    cancelEdit: () => set({ editing: null }),
+    cancelEdit: () => set({ editing: null, pointing: null }),
+
+    startPointing: (addr, caret) => {
+      const editing = get().editing
+      if (!editing || !canInsertRef(editing.text, caret)) return false
+      const a = clampAddr(addr, get().activeSheet())
+      const pointing = {
+        prefix: editing.text.slice(0, caret),
+        suffix: editing.text.slice(caret),
+        anchor: a,
+        focus: a,
+      }
+      set({ pointing, editing: { ...editing, text: pointingText(pointing).text } })
+      return true
+    },
+
+    setPointing: (anchor, focus) => {
+      const { pointing, editing } = get()
+      if (!pointing || !editing) return
+      const sheet = get().activeSheet()
+      const next = {
+        ...pointing,
+        anchor: clampAddr(anchor, sheet),
+        focus: clampAddr(focus ?? anchor, sheet),
+      }
+      set({ pointing: next, editing: { ...editing, text: pointingText(next).text } })
+    },
+
+    movePointing: (dRow, dCol, extend) => {
+      const { pointing, editing } = get()
+      if (!pointing || !editing) return
+      const sheet = get().activeSheet()
+      let next: NonNullable<Pointing>
+      if (extend) {
+        const focus = clampAddr(
+          { row: pointing.focus.row + dRow, col: pointing.focus.col + dCol },
+          sheet,
+        )
+        next = { ...pointing, focus }
+      } else {
+        const a = clampAddr(
+          { row: pointing.anchor.row + dRow, col: pointing.anchor.col + dCol },
+          sheet,
+        )
+        next = { ...pointing, anchor: a, focus: a }
+      }
+      set({ pointing: next, editing: { ...editing, text: pointingText(next).text } })
+    },
 
     setCellInput: (addr, text) => {
       mutate((model, engine) => {
@@ -937,6 +1022,7 @@ export const useStore = create<Store>((set, get) => {
         model: { ...model, activeSheetId: sheetId },
         selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
         editing: null,
+        pointing: null,
         revision: get().revision + 1,
       })
     },
@@ -1110,6 +1196,7 @@ export const useStore = create<Store>((set, get) => {
         model: snapshot,
         revision: get().revision + 1,
         editing: null,
+        pointing: null,
         dirty: !clean,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
@@ -1128,6 +1215,7 @@ export const useStore = create<Store>((set, get) => {
         model: snapshot,
         revision: get().revision + 1,
         editing: null,
+        pointing: null,
         dirty: !clean,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
@@ -1146,6 +1234,7 @@ export const useStore = create<Store>((set, get) => {
         revision: get().revision + 1,
         selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
         editing: null,
+        pointing: null,
         filePath: null,
         fileName: '新しいブック',
         dirty: false,
@@ -1166,6 +1255,7 @@ export const useStore = create<Store>((set, get) => {
         revision: get().revision + 1,
         selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
         editing: null,
+        pointing: null,
         filePath: path,
         fileName: name,
         dirty: false,

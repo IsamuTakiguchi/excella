@@ -555,3 +555,100 @@ describe('罫線', () => {
     expect(store().activeSheet().styles['A1']).toBeUndefined()
   })
 })
+
+describe('数式の参照選択（ポイントモード）', () => {
+  /** C3 で `=` まで打った状態にする */
+  function startFormula(text = '='): void {
+    store().beginEdit({ row: 2, col: 2 }, text)
+  }
+
+  it('矢印キーで参照が数式に差し込まれる', () => {
+    startFormula()
+    expect(store().startPointing({ row: 1, col: 2 }, 1)).toBe(true)
+    expect(store().editing?.text).toBe('=C2')
+    expect(store().pointing).not.toBeNull()
+
+    // さらに上へ動かすと、差し込んだ参照が置き換わる（重ならない）
+    store().movePointing(-1, 0, false)
+    expect(store().editing?.text).toBe('=C1')
+  })
+
+  it('Shift で範囲になる', () => {
+    startFormula('=SUM(')
+    store().startPointing({ row: 0, col: 0 }, 5)
+    expect(store().editing?.text).toBe('=SUM(A1')
+    store().movePointing(2, 1, true)
+    expect(store().editing?.text).toBe('=SUM(A1:B3')
+  })
+
+  it('マウスのクリックとドラッグで参照を選べる', () => {
+    startFormula()
+    store().startPointing({ row: 0, col: 0 }, 1)
+    // 別のセルをクリックし直す
+    store().setPointing({ row: 4, col: 1 })
+    expect(store().editing?.text).toBe('=B5')
+    // そのままドラッグして範囲へ
+    store().setPointing({ row: 4, col: 1 }, { row: 6, col: 3 })
+    expect(store().editing?.text).toBe('=B5:D7')
+  })
+
+  it('参照を差し込めない位置では始まらない', () => {
+    startFormula('=A1')
+    expect(store().startPointing({ row: 0, col: 0 }, 3)).toBe(false)
+    expect(store().pointing).toBeNull()
+    expect(store().editing?.text).toBe('=A1')
+
+    // そもそも数式でなければ始まらない（カーソルキーは確定に使う）
+    store().beginEdit({ row: 2, col: 2 }, '123')
+    expect(store().startPointing({ row: 0, col: 0 }, 3)).toBe(false)
+  })
+
+  it('文字を打つと参照選択は終わる', () => {
+    startFormula()
+    store().startPointing({ row: 0, col: 0 }, 1)
+    store().updateEdit('=A1+')
+    expect(store().pointing).toBeNull()
+
+    // 続きをまた参照で入れられる
+    expect(store().startPointing({ row: 1, col: 1 }, 4)).toBe(true)
+    expect(store().editing?.text).toBe('=A1+B2')
+  })
+
+  it('参照の後ろに文字が残っていても壊さない', () => {
+    // `=SUM(|)` の真ん中に差し込む
+    startFormula('=SUM()')
+    expect(store().startPointing({ row: 0, col: 0 }, 5)).toBe(true)
+    expect(store().editing?.text).toBe('=SUM(A1)')
+    store().movePointing(1, 0, false)
+    expect(store().editing?.text).toBe('=SUM(A2)')
+  })
+
+  it('確定すると数式として保存される', () => {
+    setCell('A1', '10')
+    setCell('A2', '32')
+    startFormula('=SUM(')
+    store().startPointing({ row: 0, col: 0 }, 5)
+    store().movePointing(1, 0, true)
+    store().updateEdit(`${store().editing?.text})`)
+    store().commitEdit()
+    expect(inputOf('C3')).toBe('=SUM(A1:A2)')
+    expect(valueOf('C3')).toBe(42)
+    expect(store().pointing).toBeNull()
+  })
+
+  it('編集をやめると参照選択も消える', () => {
+    startFormula()
+    store().startPointing({ row: 0, col: 0 }, 1)
+    store().cancelEdit()
+    expect(store().pointing).toBeNull()
+    expect(inputOf('C3')).toBe('')
+  })
+
+  it('シートの外へははみ出さない', () => {
+    store().beginEdit({ row: 0, col: 0 }, '=')
+    store().startPointing({ row: -1, col: 0 }, 1)
+    expect(store().editing?.text).toBe('=A1')
+    store().movePointing(-5, -5, false)
+    expect(store().editing?.text).toBe('=A1')
+  })
+})

@@ -172,6 +172,10 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     app.exit(1)
     return
   }
+  if (!(await checkPointMode(win))) {
+    app.exit(1)
+    return
+  }
 
   await captureIfRequested(win)
   console.log('[smoke] 正常に描画できました')
@@ -332,6 +336,128 @@ async function checkClickAndType(win: BrowserWindow): Promise<boolean> {
     return true
   } catch (error) {
     console.error('[smoke] クリック→入力の検査が例外で落ちました', error)
+    return false
+  }
+}
+
+/**
+ * 数式の参照選択（ポイントモード）を本物の入力で確かめる。
+ * `=` を打ってから矢印キーとクリックでセルを選び、計算結果まで見る。
+ * 矢印キーは「確定して移動」と「参照を選ぶ」で意味が変わるため、退行しやすい。
+ */
+async function checkPointMode(win: BrowserWindow): Promise<boolean> {
+  const wc = win.webContents
+  const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms))
+  const key = async (keyCode: string) => {
+    wc.sendInputEvent({ type: 'keyDown', keyCode })
+    wc.sendInputEvent({ type: 'keyUp', keyCode })
+    await tick()
+  }
+  const typeChar = async (ch: string) => {
+    wc.sendInputEvent({ type: 'keyDown', keyCode: ch })
+    wc.sendInputEvent({ type: 'char', keyCode: ch })
+    wc.sendInputEvent({ type: 'keyUp', keyCode: ch })
+    await tick()
+  }
+  const mouseClick = async (x: number, y: number) => {
+    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    await tick(40)
+    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    await tick()
+  }
+  const state = (expr: string) =>
+    wc.executeJavaScript(`(() => { const s = window.__excellaStore.getState(); return ${expr} })()`)
+
+  try {
+    win.focus()
+
+    // どの座標がどのセルに当たるかは、先にふつうのクリックで確かめておく。
+    // 座標計算を検査側で作り直すと固定ペインなどでずれるので、
+    // 「同じ座標をクリックしたら、選択されたのと同じセルが参照されること」を見る
+    const point = (await wc.executeJavaScript(`
+      (() => {
+        const r = document.querySelector('.grid-scroll').getBoundingClientRect()
+        return { x: Math.round(r.left + r.width * 0.4), y: Math.round(r.top + r.height * 0.5) }
+      })()
+    `)) as { x: number; y: number }
+    await mouseClick(point.x, point.y)
+    // 1 行で書くのは、state() が `return <式>` に埋め込むため。
+    // 改行を挟むと return の直後でセミコロンが補われて undefined になる
+    const target = (await state(
+      `((a) => { let n = a.col, letters = ''; for (;;) { letters = String.fromCharCode(65 + (n % 26)) + letters; n = Math.floor(n / 26) - 1; if (n < 0) break } return letters + (a.row + 1) })(s.selection.anchor)`,
+    )) as string
+
+    // 空いているセル（F10）を選んでから `=` を打つ
+    await wc.executeJavaScript(`window.__excellaStore.getState().setSelection({ row: 9, col: 5 })`)
+    await tick()
+    await typeChar('=')
+    if ((await state('s.editing && s.editing.text')) !== '=') {
+      console.error('[smoke] = を打っても編集が始まりません')
+      return false
+    }
+
+    // 上矢印で 1 つ上のセルを参照する（確定して移動してしまわないこと）
+    await key('Up')
+    if ((await state('s.editing && s.editing.text')) !== '=F9') {
+      console.error(
+        `[smoke] 矢印キーで参照が入りません: ${String(await state('s.editing && s.editing.text'))}`,
+      )
+      return false
+    }
+    if (!(await state('Boolean(s.pointing)'))) {
+      console.error('[smoke] 参照選択の状態になっていません')
+      return false
+    }
+
+    // さらに上へ動かすと参照が置き換わる（=F9F8 のように重ならない）
+    await key('Up')
+    if ((await state('s.editing && s.editing.text')) !== '=F8') {
+      console.error('[smoke] 矢印キーで参照が置き換わりません')
+      return false
+    }
+
+    // 演算子を打つと参照選択は終わる
+    await typeChar('+')
+    if (await state('Boolean(s.pointing)')) {
+      console.error('[smoke] 文字を打っても参照選択が終わりません')
+      return false
+    }
+
+    // 続きはクリックでも参照できる
+    await mouseClick(point.x, point.y)
+    const expected = `=F8+${target}`
+    if ((await state('s.editing && s.editing.text')) !== expected) {
+      console.error(
+        `[smoke] クリックで参照が入りません: ${String(
+          await state('s.editing && s.editing.text'),
+        )}（期待 ${expected}）`,
+      )
+      return false
+    }
+
+    // Enter で確定し、数式として保存・計算されていること
+    await key('Return')
+    await tick()
+    const input = await state(`s.inputText({ row: 9, col: 5 })`)
+    if (input !== expected) {
+      console.error(`[smoke] 確定した数式が違います: ${String(input)}`)
+      return false
+    }
+    const value = await state(`s.displayValue({ row: 9, col: 5 })`)
+    if (typeof value !== 'number') {
+      console.error(`[smoke] 数式が計算されていません: ${String(value)}`)
+      return false
+    }
+
+    // 後片付け（このあとのスクリーンショットに残さない）
+    await wc.executeJavaScript(`window.__excellaStore.getState().undo()`)
+    await wc.executeJavaScript(`window.__excellaStore.getState().setSelection({ row: 4, col: 3 })`)
+    await tick()
+
+    console.log('[smoke] 数式の参照選択（ポイントモード）の検査に通りました')
+    return true
+  } catch (error) {
+    console.error('[smoke] 数式の参照選択の検査が例外で落ちました', error)
     return false
   }
 }
