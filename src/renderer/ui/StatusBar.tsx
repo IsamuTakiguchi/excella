@@ -3,12 +3,10 @@ import { rangeToA1 } from '@shared/a1'
 import { formatGeneral } from '@shared/numberFormat'
 import { useStore } from '../store/workbookStore'
 
-/** 選択範囲の合計・平均・データの個数を出す（Excel のステータスバー相当） */
+/** 選択範囲の平均・個数・合計を出す（Excel のステータスバーと同じ並び） */
 export function StatusBar(): React.JSX.Element {
   const revision = useStore((s) => s.revision)
   const selection = useStore((s) => s.selection)
-  const fileName = useStore((s) => s.fileName)
-  const dirty = useStore((s) => s.dirty)
   const message = useStore((s) => s.statusMessage)
   const range = useStore((s) => s.selectionRange)()
 
@@ -35,22 +33,13 @@ export function StatusBar(): React.JSX.Element {
 
   return (
     <div className="status-bar">
-      <span className="file">
-        {fileName}
-        {dirty ? ' •' : ''}
-      </span>
-      <span className="sel">{rangeToA1(range)}</span>
-      {stats.numeric > 0 ? (
-        <>
-          <span>合計: {formatGeneral(stats.sum)}</span>
-          <span>平均: {formatGeneral(stats.sum / stats.numeric)}</span>
-        </>
-      ) : null}
-      {stats.count > 0 ? <span>データの個数: {stats.count}</span> : null}
+      <span className="ready">{message || '準備完了'}</span>
       <span className="spacer" />
-      {message ? <span className="message">{message}</span> : null}
-      <span className="cursor">
-        R{selection.anchor.row + 1}C{selection.anchor.col + 1}
+      {stats.numeric > 0 ? <span>平均: {formatGeneral(stats.sum / stats.numeric)}</span> : null}
+      {stats.count > 0 ? <span>データの個数: {stats.count}</span> : null}
+      {stats.numeric > 0 ? <span>合計: {formatGeneral(stats.sum)}</span> : null}
+      <span className="sel" title={`R${selection.anchor.row + 1}C${selection.anchor.col + 1}`}>
+        {rangeToA1(range)}
       </span>
     </div>
   )

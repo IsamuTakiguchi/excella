@@ -7,6 +7,7 @@ import { useStore } from './store/workbookStore'
 import { FormulaBar } from './ui/FormulaBar'
 import { SheetTabs } from './ui/SheetTabs'
 import { StatusBar } from './ui/StatusBar'
+import { TitleBar } from './ui/TitleBar'
 import { Toolbar } from './ui/Toolbar'
 
 export function App(): React.JSX.Element {
@@ -177,6 +178,7 @@ export function App(): React.JSX.Element {
           の読み込みに失敗しています）。編集と計算は利用できます。
         </div>
       )}
+      <TitleBar />
       <Toolbar />
       <FormulaBar />
       <SheetCanvas />

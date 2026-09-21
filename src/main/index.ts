@@ -37,7 +37,7 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: false,
     title: 'Excella',
-    backgroundColor: '#f6f7f9',
+    backgroundColor: '#f3f3f3',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -129,7 +129,7 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
       }),
     )
     store.setSelection({ row: 0, col: 0 }, { row: 0, col: 3 })
-    store.applyStyle({ bold: true, bg: '#E3F2FD', align: 'center' })
+    store.applyStyle({ bold: true, bg: '#E2EFDA', align: 'center' })
     store.setSelection({ row: 1, col: 3 }, { row: 4, col: 3 })
     store.applyStyle({ numFmt: '¥#,##0' })
     store.setSelection({ row: 4, col: 0 }, { row: 4, col: 3 })
@@ -146,7 +146,7 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.applyBorders('outer', { weight: 'thick' })
     // 見出し行の下だけ色付きの中線にする
     store.setSelection({ row: 0, col: 0 }, { row: 0, col: 3 })
-    store.applyBorders('bottom', { weight: 'medium', color: '#266DD3' })
+    store.applyBorders('bottom', { weight: 'medium', color: '#107C41' })
 
     // 見出し行を 1 行だけ固定し、合計セルを選んだ状態にする
     store.setSelection({ row: 1, col: 0 })

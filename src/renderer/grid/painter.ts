@@ -48,21 +48,24 @@ export type PaintContext = {
 export const FILL_HANDLE_SIZE = 7
 
 const COLORS = {
-  gridLine: '#d9dde3',
-  headerBg: '#f1f3f5',
-  headerActiveBg: '#d7e3f4',
-  headerText: '#444c56',
-  headerBorder: '#c3c9d1',
-  frozenBorder: '#8b94a0',
-  text: '#1f2328',
-  selectionFill: 'rgba(38, 109, 211, 0.10)',
-  selectionBorder: '#266dd3',
+  gridLine: '#dadada',
+  headerBg: '#f3f3f3',
+  headerActiveBg: '#cfe9da',
+  headerText: '#444444',
+  headerActiveText: '#0b5a2f',
+  headerBorder: '#c6c6c6',
+  frozenBorder: '#8f8f8f',
+  text: '#000000',
+  selectionFill: 'rgba(16, 124, 65, 0.12)',
+  selectionBorder: '#107c41',
   cellBg: '#ffffff',
-  marquee: '#266dd3',
+  marquee: '#107c41',
 }
 
 const FONT_FAMILY =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif'
+const HEADER_FONT = `500 12px ${FONT_FAMILY}`
+const HEADER_FONT_BOLD = `700 12px ${FONT_FAMILY}`
 
 /** セルのフォント指定。自動調整の計測でも同じものを使う */
 export function cellFontOf(style: CellStyle | undefined): string {
@@ -188,7 +191,7 @@ export function paint(p: PaintContext): void {
   for (const pane of panes) paintPane(p, pane)
 
   // --- ヘッダ ---------------------------------------------------------
-  ctx.font = `500 12px ${FONT_FAMILY}`
+  ctx.font = HEADER_FONT
   ctx.textBaseline = 'middle'
 
   paintColHeader(p, HEADER_W + frozenW, viewW - frozenW, scrollX, movingCols)
@@ -506,11 +509,16 @@ function paintColHeader(p: PaintContext, x0: number, w: number, scrollX: number,
   for (let c = span.first; c <= span.last; c++) {
     const x = offsetOf(p.cols, c)
     const cw = sizeOf(p.cols, c)
-    if (c >= sel.c0 && c <= sel.c1) {
+    const selected = c >= sel.c0 && c <= sel.c1
+    if (selected) {
+      // Excel と同じく、選択中の列見出しは薄い緑に塗り、下辺を緑の線で強調する
       ctx.fillStyle = COLORS.headerActiveBg
       ctx.fillRect(x, 0, cw, HEADER_H)
+      ctx.fillStyle = COLORS.selectionBorder
+      ctx.fillRect(x, HEADER_H - 2, cw, 2)
     }
-    ctx.fillStyle = COLORS.headerText
+    ctx.fillStyle = selected ? COLORS.headerActiveText : COLORS.headerText
+    ctx.font = selected ? HEADER_FONT_BOLD : HEADER_FONT
     ctx.fillText(colToLetter(c), x + cw / 2, HEADER_H / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()
@@ -537,11 +545,15 @@ function paintRowHeader(p: PaintContext, y0: number, h: number, scrollY: number,
   for (let r = span.first; r <= span.last; r++) {
     const y = offsetOf(p.rows, r)
     const rh = sizeOf(p.rows, r)
-    if (r >= sel.r0 && r <= sel.r1) {
+    const selected = r >= sel.r0 && r <= sel.r1
+    if (selected) {
       ctx.fillStyle = COLORS.headerActiveBg
       ctx.fillRect(0, y, HEADER_W, rh)
+      ctx.fillStyle = COLORS.selectionBorder
+      ctx.fillRect(HEADER_W - 2, y, 2, rh)
     }
-    ctx.fillStyle = COLORS.headerText
+    ctx.fillStyle = selected ? COLORS.headerActiveText : COLORS.headerText
+    ctx.font = selected ? HEADER_FONT_BOLD : HEADER_FONT
     ctx.fillText(String(r + 1), HEADER_W / 2, y + rh / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()

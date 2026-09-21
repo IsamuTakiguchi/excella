@@ -19,15 +19,15 @@ export type BorderPreset =
   | 'right'
   | 'none' // 罫線を消す
 
-export const BORDER_PRESETS: Array<{ preset: BorderPreset; label: string; icon: string }> = [
-  { preset: 'all', label: '格子', icon: '⊞' },
-  { preset: 'outer', label: '外枠', icon: '▢' },
-  { preset: 'inner', label: '内側', icon: '⊹' },
-  { preset: 'top', label: '上罫線', icon: '⎺' },
-  { preset: 'bottom', label: '下罫線', icon: '⎽' },
-  { preset: 'left', label: '左罫線', icon: '▏' },
-  { preset: 'right', label: '右罫線', icon: '▕' },
-  { preset: 'none', label: '罫線なし', icon: '⌀' },
+export const BORDER_PRESETS: Array<{ preset: BorderPreset; label: string }> = [
+  { preset: 'all', label: '格子' },
+  { preset: 'outer', label: '外枠' },
+  { preset: 'inner', label: '内側' },
+  { preset: 'top', label: '上罫線' },
+  { preset: 'bottom', label: '下罫線' },
+  { preset: 'left', label: '左罫線' },
+  { preset: 'right', label: '右罫線' },
+  { preset: 'none', label: '罫線なし' },
 ]
 
 export const BORDER_WEIGHTS: Array<{ weight: BorderWeight; label: string }> = [
