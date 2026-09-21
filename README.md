@@ -97,8 +97,12 @@ macOS 版が作れます。Actions タブの「Run workflow」からビルドだ
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+**Windows は `Excella-Setup-x.y.z.exe` の 1 ファイル**です。ダブルクリックするだけで
+ユーザー領域にインストールされ（管理者権限は不要）、デスクトップとスタートメニューに
+ショートカットができて自動で起動します。アンインストールは「アプリと機能」から。
+
 配布物には**コード署名をしていません**。初回起動時に警告が出るので、
-macOS は右クリック →「開く」、Windows は SmartScreen の「詳細情報」→「実行」で回避できます。
+Windows は SmartScreen の「詳細情報」→「実行」、macOS は右クリック →「開く」で回避できます。
 署名するには Apple Developer ID（年額）や Windows のコード署名証明書が必要です。
 
 アイコンは `build/icon.png`（と Windows 用の `build/icon.ico`）に入っています。

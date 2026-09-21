@@ -62,7 +62,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/*.exe
+            dist/*-Setup-*.exe
             dist/*.AppImage
             dist/*.deb
           if-no-files-found: warn
@@ -88,7 +88,8 @@ jobs:
 
             配布物には**コード署名をしていません**。そのため初回起動時に警告が出ます。
 
-            - **macOS**: アプリを右クリック →「開く」→ もう一度「開く」
-            - **Windows**: SmartScreen の「詳細情報」→「実行」
+            - **Windows**: `Excella-Setup-x.y.z.exe` をダブルクリック。SmartScreen が出たら「詳細情報」→「実行」。
+              インストーラは 1 つだけで、管理者権限は不要です（ユーザー単位でインストール）
+            - **macOS**: `.dmg` を開いてアプリを右クリック →「開く」→ もう一度「開く」
 
             署名するには Apple Developer ID や Windows のコード署名証明書が必要です。
