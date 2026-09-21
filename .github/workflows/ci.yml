@@ -61,3 +61,45 @@ jobs:
           name: smoke-screenshot
           path: smoke.png
           if-no-files-found: ignore
+
+  # Windows のインストーラを毎回作り、成果物として保存する。
+  # Release を作らなくても Actions の成果物から exe を取り出せる。
+  # PR と push で二重に走らないよう push のときだけにしている。
+  installer-windows:
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: ビルド
+        run: npm run build
+
+      - name: インストーラを作成
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder --win --publish never
+
+      # Windows ランナーには画面があるので、ビルドしたアプリをそのまま起動して
+      # 描画と日本語入力の検査まで通す。GUI アプリはシェルが待ってくれないので
+      # Start-Process -Wait で終了コードを受け取る
+      - name: Windows で実際に起動して検査
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\win-unpacked\Excella.exe" -ArgumentList "--smoke" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "起動検査に失敗しました (exit=$($p.ExitCode))" }
+          Write-Host "起動検査に通りました"
+
+      - name: インストーラを保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: Excella-Windows-Installer
+          path: dist/*-Setup-*.exe
+          if-no-files-found: error
