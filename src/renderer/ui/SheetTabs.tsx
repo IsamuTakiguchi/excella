@@ -9,7 +9,14 @@ export function SheetTabs(): React.JSX.Element {
   const store = () => useStore.getState()
 
   return (
-    <div className="sheet-tabs">
+    <div
+      className="sheet-tabs"
+      onMouseDown={(e) => {
+        // タブや＋ボタンを押してもグリッドのフォーカスを奪わない。
+        // 名前変更の入力欄だけは既定動作（フォーカス移動）が要る
+        if (!(e.target instanceof HTMLInputElement)) e.preventDefault()
+      }}
+    >
       <button className="add-sheet" title="シートを追加" onClick={() => store().addSheet()}>
         ＋
       </button>

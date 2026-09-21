@@ -115,8 +115,16 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
         composing.current = false
         store().updateEdit(e.currentTarget.value)
       }}
-      onBlur={() => {
+      onBlur={(e) => {
         if (useStore.getState().editing) commit()
+        // フォーカスの行き先が無い（body に落ちた）なら取り戻す。
+        // 他の入力欄やボタンへ移ったときは邪魔しない
+        if (e.relatedTarget === null) {
+          const el = e.currentTarget
+          setTimeout(() => {
+            if (document.activeElement === document.body) el.focus()
+          }, 0)
+        }
       }}
       style={
         editing

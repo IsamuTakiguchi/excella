@@ -15,6 +15,7 @@ import {
 } from './geometry'
 import { cellFontOf, FILL_HANDLE_SIZE, paint } from './painter'
 import { CellInput } from './CellInput'
+import { focusGrid, isGridInput } from './focus'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
@@ -269,11 +270,6 @@ export function SheetCanvas(): React.JSX.Element {
     [sheet.rowCount],
   )
 
-  /** セル入力欄へフォーカスを戻す（IME はここで変換する） */
-  const focusInput = () => {
-    document.querySelector<HTMLTextAreaElement>('[data-grid-input]')?.focus()
-  }
-
   // --- マウス操作 -------------------------------------------------------
   const snapshotSizes = (): ResizeSnapshot => ({
     colWidths: { ...sheet.colWidths },
@@ -291,9 +287,13 @@ export function SheetCanvas(): React.JSX.Element {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return
+    // 既定動作に任せるとフォーカスがクリック先（body）へ移り、以後の
+    // キー入力がどこにも届かなくなる。入力欄自体を押した場合だけは
+    // キャレット移動のために既定動作を残す
+    if (!isGridInput(e.target)) e.preventDefault()
     const store = useStore.getState()
     if (store.editing) store.commitEdit()
-    focusInput()
+    focusGrid()
 
     const { zone, x, y } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)
@@ -397,7 +397,7 @@ export function SheetCanvas(): React.JSX.Element {
     e.preventDefault()
     const store = useStore.getState()
     if (store.editing) store.commitEdit()
-    focusInput()
+    focusGrid()
 
     const { zone } = zoneOf(e.clientX, e.clientY)
     const addr = toAddr(e.clientX, e.clientY)

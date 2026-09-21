@@ -168,6 +168,10 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     app.exit(1)
     return
   }
+  if (!(await checkClickAndType(win))) {
+    app.exit(1)
+    return
+  }
 
   await captureIfRequested(win)
   console.log('[smoke] 正常に描画できました')
@@ -247,6 +251,87 @@ async function checkIme(win: BrowserWindow): Promise<boolean> {
     return true
   } catch (error) {
     console.error('[smoke] 日本語入力の検査が例外で落ちました', error)
+    return false
+  }
+}
+
+/**
+ * 本物のマウス操作とキー入力で「クリックして打てる」ことを確かめる。
+ * executeJavaScript からの疑似イベントではブラウザの既定動作（クリック先への
+ * フォーカス移動）が起きないため、sendInputEvent で Chromium の入力経路を通す。
+ * 実際に「クリックでセルは選べるが入力できない」退行が起きたので毎回検査する。
+ */
+async function checkClickAndType(win: BrowserWindow): Promise<boolean> {
+  const wc = win.webContents
+  const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms))
+  const mouseClick = async (x: number, y: number) => {
+    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    await tick(40)
+    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    await tick()
+  }
+  const typeChar = async (ch: string) => {
+    wc.sendInputEvent({ type: 'keyDown', keyCode: ch })
+    wc.sendInputEvent({ type: 'char', keyCode: ch })
+    wc.sendInputEvent({ type: 'keyUp', keyCode: ch })
+    await tick()
+  }
+  const pressEscape = async () => {
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+    await tick()
+  }
+  const state = (expr: string) =>
+    wc.executeJavaScript(`(() => { const s = window.__excellaStore.getState(); return ${expr} })()`)
+
+  try {
+    win.focus()
+    // 何も無いセル（K30 あたり）の画面座標を求めてクリック
+    const cell = (await wc.executeJavaScript(`
+      (() => {
+        const r = document.querySelector('.grid-scroll').getBoundingClientRect()
+        return { x: Math.round(r.left + 46 + 88 * 10 + 40), y: Math.round(r.top + 24 + 22 * 12 + 11) }
+      })()
+    `)) as { x: number; y: number }
+    await mouseClick(cell.x, cell.y)
+
+    const focused = await wc.executeJavaScript(
+      `document.activeElement && document.activeElement.dataset.gridInput === 'true'`,
+    )
+    if (!focused) {
+      console.error('[smoke] クリック後に入力欄からフォーカスが外れています')
+      return false
+    }
+
+    await typeChar('x')
+    if ((await state('s.editing && s.editing.text')) !== 'x') {
+      console.error('[smoke] クリック後のキー入力がセルに届いていません')
+      return false
+    }
+    await pressEscape()
+
+    // ツールバーのボタンを押した後も打てること（ボタンがフォーカスを奪わない）
+    const bold = (await wc.executeJavaScript(`
+      (() => {
+        const b = document.querySelector('button[title^="太字"]')
+        const r = b.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      })()
+    `)) as { x: number; y: number }
+    await mouseClick(bold.x, bold.y)
+    await typeChar('y')
+    if ((await state('s.editing && s.editing.text')) !== 'y') {
+      console.error('[smoke] ツールバーのボタンを押した後にキー入力が届きません')
+      return false
+    }
+    await pressEscape()
+    // 太字の切り替えを戻しておく
+    await wc.executeJavaScript(`window.__excellaStore.getState().undo()`)
+
+    console.log('[smoke] クリック→入力の検査に通りました')
+    return true
+  } catch (error) {
+    console.error('[smoke] クリック→入力の検査が例外で落ちました', error)
     return false
   }
 }

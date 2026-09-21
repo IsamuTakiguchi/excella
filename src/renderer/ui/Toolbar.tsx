@@ -3,6 +3,7 @@ import { colToLetter } from '@shared/a1'
 import { BORDER_PRESETS, BORDER_WEIGHTS } from '@shared/borders'
 import type { BorderWeight } from '@shared/model'
 import { NUMBER_FORMATS } from '@shared/numberFormat'
+import { focusGrid } from '../grid/focus'
 import { useStore } from '../store/workbookStore'
 
 const TEXT_COLORS = ['#1F2328', '#C0392B', '#1F6FEB', '#137333', '#8250DF', '#B26B00']
@@ -27,7 +28,14 @@ export function Toolbar(): React.JSX.Element {
   const sortColumnName = colToLetter(range.c0 + sortOffset)
 
   return (
-    <div className="toolbar">
+    // ボタンを押してもグリッドのフォーカスを奪わない（Excel と同じ挙動）。
+    // select や色は操作にフォーカスが要るので、変更後にグリッドへ戻す
+    <div
+      className="toolbar"
+      onMouseDown={(e) => {
+        if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+      }}
+    >
       <div className="group">
         <button title="元に戻す (Ctrl+Z)" disabled={!canUndo} onClick={() => store().undo()}>
           ↺
@@ -104,11 +112,12 @@ export function Toolbar(): React.JSX.Element {
         <select
           title="表示形式"
           value={style?.numFmt ?? 'General'}
-          onChange={(e) =>
+          onChange={(e) => {
             store().applyStyle({
               numFmt: e.target.value === 'General' ? undefined : e.target.value,
             })
-          }
+            focusGrid()
+          }}
         >
           {NUMBER_FORMATS.map((fmt) => (
             <option key={fmt.code} value={fmt.code}>
@@ -161,7 +170,10 @@ export function Toolbar(): React.JSX.Element {
         <select
           title="罫線の太さ"
           value={borderWeight}
-          onChange={(e) => setBorderWeight(e.target.value as BorderWeight)}
+          onChange={(e) => {
+            setBorderWeight(e.target.value as BorderWeight)
+            focusGrid()
+          }}
         >
           {BORDER_WEIGHTS.map((w) => (
             <option key={w.weight} value={w.weight}>
@@ -175,6 +187,7 @@ export function Toolbar(): React.JSX.Element {
           title="罫線の色"
           value={borderColor}
           onChange={(e) => setBorderColor(e.target.value)}
+          onBlur={focusGrid}
         />
       </div>
 
@@ -207,7 +220,10 @@ export function Toolbar(): React.JSX.Element {
           <input
             type="checkbox"
             checked={skipHeader}
-            onChange={(e) => setSkipHeader(e.target.checked)}
+            onChange={(e) => {
+              setSkipHeader(e.target.checked)
+              focusGrid()
+            }}
           />
           先頭行は見出し
         </label>
