@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Excel ライクな表計算デスクトップアプリ **Excella** のリポジトリです。
+Excel ライクな表計算アプリ **Excella** のリポジトリです。デスクトップ版（Electron）と
+ブラウザ／PWA 版（スマホ向け、GitHub Pages に公開）が同じ renderer で動きます。
 このファイルは、作業を始める前に押さえておくべき前提をまとめたものです。
 
 ## コマンド
@@ -15,11 +16,14 @@ npm test             # vitest
 npm run build        # out/ に本番ビルド
 npm run smoke        # ビルド＋実際に起動して描画を確認
 npm run dist         # electron-builder でパッケージング
+npm run build:web    # ブラウザ／PWA 版を out/web に（WEB_BASE=/excella/ でサブパス）
+npm run smoke:web    # ブラウザ版を iPhone 相当でエミュレートしてタップ操作まで検査
 ```
 
 **変更後は必ず `lint` → `format:check` → `typecheck` → `test` を通すこと。**
 UI の見た目に関わる変更をしたら、`smoke` にスクリーンショットを撮らせて目視まで行う
-（Canvas 描画はテストで担保できないため）。
+（Canvas 描画はテストで担保できないため）。renderer を触ったら `smoke:web` も通す
+（タッチ端末ではフォーカスの扱いが違うため、PC で動いてもスマホで壊れることがある）。
 
 ```bash
 xvfb-run -a npx electron ./out/main/index.js --smoke --no-sandbox --screenshot shot.png
@@ -34,8 +38,9 @@ src/
 ├─ main/       Electron main。ウィンドウ、メニュー、ダイアログ、ファイル読み書き
 │   └─ io/     ExcelJS による xlsx の変換（main プロセスでのみ動く）
 ├─ preload/    contextBridge で renderer に公開する最小限の API
-├─ shared/     main と renderer で共有する純粋モジュール
-└─ renderer/   React の UI
+├─ shared/     main と renderer で共有する純粋モジュール（xlsx 変換もここ。fs には触らない）
+└─ renderer/   React の UI（デスクトップ版・ブラウザ版で共通）
+    ├─ bridge.ts     ファイル入出力の入口（Electron: preload / ブラウザ: webBridge.ts）
     ├─ engine/ HyperFormula のラッパ
     ├─ store/  zustand による状態管理と undo/redo
     ├─ grid/   Canvas によるグリッド描画と操作
@@ -68,6 +73,12 @@ src/
    セルまで確定してしまう。
 7. **オーバーレイ（入力欄・右クリックメニュー）はスクロール要素の外に置く**。
    中に入れると通常フローで canvas の下へ流れ、入力欄がグリッドの外に出る。
+8. **タッチ端末（`pointer: coarse`）では入力欄を編集中だけフォーカスする**。
+   フォーカス＝ソフトキーボード表示なので、常時フォーカスだとキーボードが出っぱなしになる。
+   `focusGrid()` はタッチ端末では編集中以外 no-op。選択中セルの再タップで編集、長押しでメニュー。
+9. **renderer は Electron 専用 API を直接呼ばない**。ファイル入出力は `bridge` 経由にし、
+   xlsx の変換は `shared/xlsx.ts`（バイト列 ⇄ モデル）に置く。ExcelJS は約 1 MB あるので
+   ブラウザ版では動的 import で遅延読み込みする。
 
 ## テストの方針
 

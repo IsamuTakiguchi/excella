@@ -15,7 +15,7 @@ import {
 } from './geometry'
 import { cellFontOf, FILL_HANDLE_SIZE, paint } from './painter'
 import { CellInput } from './CellInput'
-import { focusGrid, isGridInput } from './focus'
+import { focusGrid, isGridInput, isTouchDevice } from './focus'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
@@ -341,9 +341,47 @@ export function SheetCanvas(): React.JSX.Element {
       return
     }
 
+    // タッチ端末：選択中のセルをもう一度タップしたら編集を始める
+    // （ダブルタップはブラウザによって dblclick にならないため）
+    if (isTouchDevice() && !e.shiftKey && zone === 'body') {
+      const range = store.selectionRange()
+      const single = range.r0 === range.r1 && range.c0 === range.c1
+      const anchor = store.selection.anchor
+      if (single && anchor.row === addr.row && anchor.col === addr.col) {
+        store.beginEdit(addr)
+        return
+      }
+    }
+
     if (e.shiftKey) store.setSelection(store.selection.anchor, addr)
     else store.setSelection(addr)
     dragRef.current = { kind: 'select' }
+  }
+
+  // --- 長押し（タッチ端末の右クリック相当） -----------------------------
+  const longPressRef = useRef<{ timer: number; x: number; y: number } | null>(null)
+  const cancelLongPress = () => {
+    if (longPressRef.current) window.clearTimeout(longPressRef.current.timer)
+    longPressRef.current = null
+  }
+  const onTouchStart = (e: React.TouchEvent) => {
+    cancelLongPress()
+    if (e.touches.length !== 1) return
+    const { clientX, clientY } = e.touches[0]
+    const timer = window.setTimeout(() => {
+      longPressRef.current = null
+      openContextMenu(clientX, clientY)
+    }, 500)
+    longPressRef.current = { timer, x: clientX, y: clientY }
+  }
+  const onTouchMove = (e: React.TouchEvent) => {
+    const pressed = longPressRef.current
+    if (!pressed) return
+    const t = e.touches[0]
+    // 指が動いたらスクロールなので長押しにしない
+    if (Math.abs(t.clientX - pressed.x) > 10 || Math.abs(t.clientY - pressed.y) > 10) {
+      cancelLongPress()
+    }
   }
 
   const onMouseMove = (e: React.MouseEvent) => {
@@ -395,12 +433,18 @@ export function SheetCanvas(): React.JSX.Element {
 
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
+    // タッチ端末では長押しのタイマーから開く（ブラウザが出す contextmenu と二重にしない）
+    if (isTouchDevice()) return
+    openContextMenu(e.clientX, e.clientY)
+  }
+
+  const openContextMenu = (clientX: number, clientY: number) => {
     const store = useStore.getState()
     if (store.editing) store.commitEdit()
     focusGrid()
 
-    const { zone } = zoneOf(e.clientX, e.clientY)
-    const addr = toAddr(e.clientX, e.clientY)
+    const { zone } = zoneOf(clientX, clientY)
+    const addr = toAddr(clientX, clientY)
 
     // 選択範囲の外を右クリックしたら、そのセルを選び直す
     const range = store.selectionRange()
@@ -464,7 +508,7 @@ export function SheetCanvas(): React.JSX.Element {
       },
     ]
 
-    setContextMenu({ x: e.clientX, y: e.clientY, items })
+    setContextMenu({ x: clientX, y: clientY, items })
   }
 
   const onDoubleClick = (e: React.MouseEvent) => {
@@ -593,6 +637,10 @@ export function SheetCanvas(): React.JSX.Element {
         onMouseLeave={endDrag}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={cancelLongPress}
+        onTouchCancel={cancelLongPress}
         style={{ cursor }}
       >
         <div className="grid-spacer" style={{ width: totalW, height: totalH }} />

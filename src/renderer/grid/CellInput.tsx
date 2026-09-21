@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Addr } from '@shared/a1'
 import { useStore, type Editing } from '../store/workbookStore'
+import { isTouchDevice } from './focus'
 
 type Props = {
   editing: Editing
@@ -38,10 +39,21 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
     }
   }, [editing])
 
-  // 入力欄は常にフォーカスを持たせておく（IME の変換がここで始まる）
+  // 入力欄は常にフォーカスを持たせておく（IME の変換がここで始まる）。
+  // ただしタッチ端末ではフォーカス＝ソフトキーボード表示なので、編集中だけにする
   useEffect(() => {
-    ref.current?.focus()
+    if (!isTouchDevice()) ref.current?.focus()
   }, [])
+
+  // タッチ端末：編集開始でキーボードを出し、終了で引っ込める。
+  // iOS はユーザー操作と同じタスク内の focus() しか受け付けないので layout effect で行う
+  useLayoutEffect(() => {
+    if (!isTouchDevice()) return
+    const el = ref.current
+    if (!el) return
+    if (editing) el.focus()
+    else if (document.activeElement === el) el.blur()
+  }, [editing])
 
   const store = () => useStore.getState()
   /** 編集を始めるセル。props では再描画前の古い値になりうるので毎回ストアから読む */
@@ -118,8 +130,9 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
       onBlur={(e) => {
         if (useStore.getState().editing) commit()
         // フォーカスの行き先が無い（body に落ちた）なら取り戻す。
-        // 他の入力欄やボタンへ移ったときは邪魔しない
-        if (e.relatedTarget === null) {
+        // 他の入力欄やボタンへ移ったときは邪魔しない。
+        // タッチ端末ではキーボードを閉じたいので取り戻さない
+        if (e.relatedTarget === null && !isTouchDevice()) {
           const el = e.currentTarget
           setTimeout(() => {
             if (document.activeElement === document.body) el.focus()

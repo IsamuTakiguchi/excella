@@ -1,4 +1,5 @@
 import { useStore } from '../store/workbookStore'
+import { FileMenu } from './FileMenu'
 import { LogoIcon } from './Icons'
 
 /** Excel と同じ緑のタイトル帯。開いているファイル名と未保存の印を出す */
@@ -10,6 +11,7 @@ export function TitleBar(): React.JSX.Element {
       <span className="logo">
         <LogoIcon />
       </span>
+      <FileMenu />
       <span className="file">
         {fileName}
         {dirty ? ' *' : ''}

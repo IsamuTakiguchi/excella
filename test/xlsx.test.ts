@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { workbookFromXlsx, xlsxFromWorkbook } from '../src/main/io/xlsx'
+import { workbookFromXlsxBuffer, xlsxBufferFromWorkbook } from '../src/shared/xlsx'
 import { createSheet, type WorkbookModel } from '../src/shared/model'
 
 let dir = ''
@@ -125,5 +126,23 @@ describe('xlsx の往復', () => {
     const loaded = await workbookFromXlsx(path)
     expect(loaded.sheets).toHaveLength(1)
     expect(Object.keys(loaded.sheets[0].cells)).toHaveLength(0)
+  })
+})
+
+describe('xlsx のバイト列での往復（ブラウザ版が使う経路）', () => {
+  it('ファイルを介さずに同じ内容が戻る', async () => {
+    const model = sampleModel()
+    const bytes = await xlsxBufferFromWorkbook(model)
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    // xlsx は zip なので先頭は "PK"
+    expect(String.fromCharCode(bytes[0], bytes[1])).toBe('PK')
+
+    // ブラウザの File.arrayBuffer() と同じ ArrayBuffer で読めること
+    const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    const loaded = await workbookFromXlsxBuffer(copy as ArrayBuffer)
+    expect(loaded.sheets.map((s) => s.name)).toEqual(['売上', 'メモ'])
+    expect(loaded.sheets[0].cells['B4']).toEqual({ f: '=SUM(B2:B3)' })
+    expect(loaded.sheets[0].styles['A1']?.bg).toBe('#FFF3BF')
+    expect(loaded.sheets[0].frozen).toEqual({ rows: 1, cols: 0 })
   })
 })

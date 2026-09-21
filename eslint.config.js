@@ -12,6 +12,23 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
+    // スモークテストなどの Node スクリプト。page.evaluate() の中はブラウザで動くので
+    // 両方のグローバルを許す
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly',
+        window: 'readonly',
+        document: 'readonly',
+        navigator: 'readonly',
+        matchMedia: 'readonly',
+      },
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'error',

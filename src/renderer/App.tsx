@@ -1,7 +1,8 @@
 import { useCallback, useEffect } from 'react'
 import { formatCellValue } from '@shared/numberFormat'
 import type { MenuAction, SerializedResults } from '@shared/ipc'
-import { bridge, hasFileAccess } from './bridge'
+import { bridge, preloadMissing } from './bridge'
+import { onLocalMenu } from './menuBus'
 import { SheetCanvas } from './grid/SheetCanvas'
 import { useStore } from './store/workbookStore'
 import { FormulaBar } from './ui/FormulaBar'
@@ -92,7 +93,9 @@ export function App(): React.JSX.Element {
     [open, save, exportCsv],
   )
 
+  // ネイティブメニュー（デスクトップ）と画面上のファイルメニュー（両方）の両方を受ける
   useEffect(() => bridge.onMenu(handleMenu), [handleMenu])
+  useEffect(() => onLocalMenu(handleMenu), [handleMenu])
 
   // ファイル関連付けやコマンドライン引数から開かれた場合
   useEffect(
@@ -172,12 +175,11 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      {hasFileAccess ? null : (
+      {preloadMissing ? (
         <div className="warning-banner">
-          ファイルの読み書きが使えません（preload
-          の読み込みに失敗しています）。編集と計算は利用できます。
+          preload の読み込みに失敗しています。ファイルの読み書きはブラウザの機能で代替します。
         </div>
-      )}
+      ) : null}
       <TitleBar />
       <Toolbar />
       <FormulaBar />

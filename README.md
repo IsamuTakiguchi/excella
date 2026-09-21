@@ -1,10 +1,47 @@
 # Excella
 
-Excel のような表計算のデスクトップアプリです。Electron + React + TypeScript で作られていて、
-数式エンジンに [HyperFormula](https://hyperformula.handsontable.com/)、xlsx の読み書きに
-[ExcelJS](https://github.com/exceljs/exceljs) を使っています。
+Excel のような表計算アプリです。**Windows / macOS / Linux のデスクトップ版**（Electron）と、
+**スマホやタブレットのブラウザから使える PWA 版**があり、どちらも同じコードで動きます。
+React + TypeScript で作られていて、数式エンジンに [HyperFormula](https://hyperformula.handsontable.com/)、
+xlsx の読み書きに [ExcelJS](https://github.com/exceljs/exceljs) を使っています。
 
 ![Excella のスクリーンショット](docs/screenshot.png)
+
+<img src="docs/screenshot-mobile.png" alt="スマホ表示" width="240" align="right" />
+
+## スマホ・タブレットで使う（PWA）
+
+`main` に push すると GitHub Pages に公開されます（`.github/workflows/pages.yml`）。
+公開先は **https://isamutakiguchi.github.io/excella/** です。
+初回だけリポジトリの Settings → Pages → Source を「GitHub Actions」にしてください。
+
+ホーム画面に追加するとアプリのように全画面で起動し、オフラインでも開けます。
+
+- **iPhone / iPad**（Safari）: 共有ボタン →「ホーム画面に追加」
+- **Android**（Chrome）: メニュー（︙）→「アプリをインストール」または「ホーム画面に追加」
+- **PC のブラウザ**（Chrome / Edge）: アドレスバー右端のインストールアイコン
+
+### スマホでの操作
+
+| 操作           | 方法                                                   |
+| -------------- | ------------------------------------------------------ |
+| セルを選ぶ     | タップ                                                 |
+| 編集する       | 選んだセルをもう一度タップ（または数式バーをタップ）   |
+| 確定・取消     | キーボードの Enter ／ 別のセルをタップ                 |
+| スクロール     | 指でドラッグ                                           |
+| メニュー       | 長押し（切り取り・貼り付け・行列の挿入削除・結合など） |
+| 行・列ごと選ぶ | 行番号・列名をタップ                                   |
+| 範囲を選ぶ     | 名前ボックスに `A1:C5` のように入力                    |
+| ファイルを開く | 左上の「ファイル」→「開く…」                           |
+| 保存           | 「ファイル」→「保存」                                  |
+
+ブラウザ版のファイル保存は、Chrome / Edge / Android Chrome では**開いたファイルへの上書き**が
+できます（File System Access API）。iPhone の Safari など対応していないブラウザでは
+**ダウンロード**として保存されるので、「ファイル」アプリから開き直してください。
+
+ドラッグでの範囲選択、フィルハンドル、列幅の変更はマウス操作です（タッチではスクロールになります）。
+
+<br clear="right" />
 
 ## できること
 
@@ -67,7 +104,15 @@ npm run typecheck    # main / renderer / test の 3 つの tsconfig を型チェ
 npm test             # vitest（純粋モジュールと xlsx・CSV の往復テスト）
 npm run build        # out/ に本番ビルド
 npm start            # ビルド済みのものを起動
+
+npm run dev:web      # ブラウザ版を開発用に起動（http://localhost:5173）
+npm run build:web    # ブラウザ／PWA 版を out/web にビルド
+npm run preview:web  # ビルドしたブラウザ版を配信して確認
 ```
+
+ブラウザ版は `out/web` の静的ファイルだけで動くので、GitHub Pages 以外の
+どのホスティングにも置けます。サブパスに置くときは `WEB_BASE=/excella/ npm run build:web`
+のようにパスを渡してください（Service Worker と manifest のスコープに使います）。
 
 ### 動作確認（スモークテスト）
 
@@ -80,7 +125,14 @@ electron ./out/main/index.js --smoke --screenshot shot.png
 
 # ファイルを指定すると、関連付けから開いたときと同じ経路で読み込んで確認できる
 electron ./out/main/index.js --smoke data.xlsx
+
+# ブラウザ版：iPhone 相当のタッチ端末をエミュレートして、タップで編集できるところまで確認
+npm run smoke:web
+node scripts/web-smoke.mjs --screenshot mobile.png   # ビルド済みなら直接
 ```
+
+ブラウザ版のスモークは Playwright の Chromium を使います。手元に無ければ
+`npx playwright-core install chromium` で入ります（`CHROMIUM_PATH` で既存の Chromium も指定可）。
 
 ### 配布パッケージの作成
 
@@ -112,7 +164,8 @@ Windows は SmartScreen の「詳細情報」→「実行」、macOS は右ク�
 署名するには Apple Developer ID（年額）や Windows のコード署名証明書が必要です。
 
 アイコンは `build/icon.png`（と Windows 用の `build/icon.ico`）に入っています。
-差し替えたいときはこの 2 つを置き換えてください。
+差し替えたいときはこの 2 つを置き換え、`python3 scripts/make-pwa-icons.py` で
+ホーム画面用（`src/renderer/public/icons/`）も作り直してください。
 
 ## 構成
 
@@ -121,8 +174,9 @@ src/
 ├─ main/       Electron main。ウィンドウ、メニュー、ダイアログ、ファイル読み書き
 │   └─ io/     ExcelJS による xlsx の変換（main プロセスでのみ動く）
 ├─ preload/    contextBridge で renderer に公開する最小限の API
-├─ shared/     main と renderer で共有する純粋モジュール（モデル・A1 変換・CSV・表示形式）
-└─ renderer/   React の UI
+├─ shared/     main と renderer で共有する純粋モジュール（モデル・A1 変換・CSV・表示形式・xlsx 変換）
+└─ renderer/   React の UI（デスクトップ版とブラウザ版で共通）
+    ├─ bridge.ts     ファイル入出力の入口。Electron なら preload、ブラウザなら webBridge.ts
     ├─ engine/ HyperFormula のラッパ
     ├─ store/  zustand による状態管理と undo/redo
     ├─ grid/   Canvas によるグリッド描画と操作
@@ -135,6 +189,11 @@ src/
   ファイル I/O は main プロセスだけが行い、renderer にはプレーンな JSON しか渡しません。
   preload が公開するのは「ダイアログを開いて読み書きする」4 つの操作だけで、
   任意パスへの読み書き API はありません。
+- **1 つの renderer を 2 つの器で動かす** — Electron では preload の橋、ブラウザでは
+  File System Access API／ファイル選択／ダウンロードで同じ `ExcellaApi` を実装しています。
+  xlsx の変換は `shared/xlsx.ts` に置き、バイト列だけを扱うので両方で動きます。
+- **タッチ端末** — セル入力欄は PC では常にフォーカスを持ちますが（IME のため）、
+  タッチ端末ではソフトキーボードが出てしまうので編集中だけフォーカスします。
 - **役割分担** — 値と数式の計算は HyperFormula が持ち、書式・列幅行高・シート構成は
   アプリ側のモデルが持ちます。
 - **undo/redo** — HyperFormula 側の undo スタックは使わず、アプリ側で変更前のモデル

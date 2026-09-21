@@ -1,0 +1,59 @@
+# ブラウザ／PWA 版を GitHub Pages に公開する。
+#
+# main に push されるたびにデプロイする。初回だけリポジトリの
+# Settings → Pages → Build and deployment → Source を「GitHub Actions」にしておくこと
+# （configure-pages の enablement で自動化を試みるが、権限が足りない場合は手動で）。
+# 公開先は https://<owner>.github.io/<repo>/ になる。
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: Pages の設定を取得
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # サブパス（/excella/ など）に置かれるので、manifest と Service Worker の
+      # スコープをそれに合わせてビルドする
+      - name: PWA をビルド
+        env:
+          WEB_BASE: ${{ steps.pages.outputs.base_path }}/
+        run: npm run build:web
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/web
+
+      - name: デプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4

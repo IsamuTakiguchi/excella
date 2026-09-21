@@ -45,6 +45,8 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* スマホのブラウザはアドレスバーの出入りで高さが変わる。対応ブラウザでは dvh を使う */
+  height: 100dvh;
 }
 
 /* ---------- タイトル帯 ---------- */
@@ -52,12 +54,29 @@ body,
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
-  padding: 0 10px;
+  height: calc(30px + env(safe-area-inset-top));
+  /* ノッチのある端末でホーム画面から起動したときは、緑をステータスバーの下まで伸ばす */
+  padding: env(safe-area-inset-top) 10px 0;
   background: var(--green);
   color: #fff;
   font-size: 12px;
   user-select: none;
+}
+
+.file-menu-button {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-menu-button:hover,
+.file-menu-button[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .title-bar .logo {
@@ -279,6 +298,11 @@ body,
   overflow: auto;
   outline: none;
   background: #fff;
+  /* 指でのスクロールは許し、ダブルタップ拡大や長押しの文字選択は止める */
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .grid-spacer {
@@ -411,8 +435,8 @@ body,
   display: flex;
   align-items: center;
   gap: 18px;
-  height: 22px;
-  padding: 0 10px;
+  height: calc(22px + env(safe-area-inset-bottom));
+  padding: 0 10px env(safe-area-inset-bottom);
   background: var(--bg);
   border-top: 1px solid var(--border);
   color: var(--muted);
@@ -479,4 +503,98 @@ body,
   height: 1px;
   margin: 4px 2px;
   background: var(--border);
+}
+
+/* ---------- スマホ・タブレット ---------- */
+
+/* 狭い画面：リボンは折り返さず横スクロールにし、要らない文字を隠す */
+@media (max-width: 720px) {
+  .toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar .group {
+    flex: none;
+  }
+
+  .title-bar .app-name {
+    display: none;
+  }
+
+  .name-box {
+    width: 72px;
+  }
+
+  .status-bar {
+    gap: 10px;
+  }
+}
+
+/* タッチが主な入力の端末：押しやすい大きさにする */
+@media (pointer: coarse) {
+  .toolbar button {
+    min-width: 34px;
+    height: 34px;
+  }
+
+  .toolbar .items {
+    min-height: 38px;
+  }
+
+  .toolbar .swatch {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+  }
+
+  .toolbar select,
+  .toolbar .color-input {
+    height: 30px;
+  }
+
+  .file-menu-button {
+    height: 26px;
+  }
+
+  /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大してしまう */
+  .formula-input,
+  .name-box,
+  .sheet-rename {
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .cell-input.editing {
+    font-size: 16px;
+  }
+
+  /* 編集していないときの 1px の入力欄をタップしてキーボードが出ないように */
+  .cell-input:not(.editing) {
+    pointer-events: none;
+  }
+
+  .context-menu button {
+    padding: 10px 16px;
+    font-size: 15px;
+  }
+
+  .sheet-tabs {
+    height: 36px;
+  }
+
+  .sheet-tab {
+    height: 34px;
+  }
+
+  .add-sheet {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 4px;
+  }
 }

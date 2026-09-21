@@ -62,6 +62,47 @@ jobs:
           path: smoke.png
           if-no-files-found: ignore
 
+  # ブラウザ／PWA 版。ビルドしたものを iPhone 相当のタッチ端末として開き、
+  # タップで編集できることまで確認する。成果物は静的ファイルなので
+  # どこのホスティングにも置ける（GitHub Pages へのデプロイは pages.yml）。
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: Chromium を用意
+        run: npx playwright-core install --with-deps chromium
+
+      - name: PWA をビルド
+        run: npm run build:web
+
+      - name: スマホ表示のスモークテスト
+        run: node scripts/web-smoke.mjs --screenshot smoke-mobile.png
+
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-mobile-screenshot
+          path: smoke-mobile.png
+          if-no-files-found: ignore
+
+      - name: Web 版を保存
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Excella-Web
+          path: out/web
+          if-no-files-found: error
+
   # Windows のインストーラを毎回作り、成果物として保存する。
   # Release を作らなくても Actions の成果物から exe を取り出せる。
   # PR と push で二重に走らないよう push のときだけにしている。
