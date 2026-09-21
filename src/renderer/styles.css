@@ -1,0 +1,600 @@
+/*
+ * Excel 365 に寄せた配色。アクセントは Excel の緑（#107C41）。
+ * タイトル帯が濃い緑、リボン（ツールバー）は白、グリッドは白地に薄い灰色の罫線。
+ */
+:root {
+  --green: #107c41;
+  --green-dark: #0b5a2f;
+  --green-soft: #e1f0e7;
+  --green-soft-2: #cfe9da;
+  --bg: #f3f3f3;
+  --panel: #ffffff;
+  --border: #d6d6d6;
+  --border-strong: #bdbdbd;
+  --text: #212121;
+  --muted: #605e5c;
+  --accent: var(--green);
+  --accent-soft: var(--green-soft);
+  font-family:
+    'Segoe UI',
+    'Yu Gothic UI',
+    'Meiryo UI',
+    'Hiragino Sans',
+    'Noto Sans JP',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-size: 13px;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* スマホのブラウザはアドレスバーの出入りで高さが変わる。対応ブラウザでは dvh を使う */
+  height: 100dvh;
+}
+
+/* ---------- タイトル帯 ---------- */
+.title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: calc(30px + env(safe-area-inset-top));
+  /* ノッチのある端末でホーム画面から起動したときは、緑をステータスバーの下まで伸ばす */
+  padding: env(safe-area-inset-top) 10px 0;
+  background: var(--green);
+  color: #fff;
+  font-size: 12px;
+  user-select: none;
+}
+
+.file-menu-button {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-menu-button:hover,
+.file-menu-button[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.title-bar .logo {
+  display: flex;
+  align-items: center;
+  color: #fff;
+}
+
+.title-bar .file {
+  font-weight: 600;
+}
+
+.title-bar .app-name {
+  margin-left: auto;
+  opacity: 0.85;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- リボン（ツールバー） ---------- */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 4px 6px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar .group {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0 6px 3px;
+  border-right: 1px solid var(--border);
+}
+
+.toolbar .group:last-child {
+  border-right: none;
+}
+
+.toolbar .items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 30px;
+}
+
+.toolbar .group-label {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.toolbar .vsep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 26px;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar button.glyph {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 14px;
+  min-width: 24px;
+}
+
+.toolbar button:hover:not(:disabled) {
+  background: var(--green-soft);
+  border-color: var(--green-soft-2);
+}
+
+.toolbar button:active:not(:disabled) {
+  background: var(--green-soft-2);
+}
+
+.toolbar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.toolbar button.active {
+  background: var(--green-soft-2);
+  border-color: var(--green);
+  color: var(--green-dark);
+}
+
+.toolbar .swatches {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.toolbar .swatch {
+  width: 13px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+}
+
+.toolbar .swatch.none {
+  background: repeating-linear-gradient(45deg, #fff, #fff 3px, #d9534f 3px, #d9534f 4px);
+}
+
+.toolbar select {
+  height: 24px;
+  max-width: 120px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 4px;
+  font: inherit;
+}
+
+.toolbar select:focus,
+.toolbar .color-input:focus {
+  outline: 2px solid var(--green);
+  outline-offset: -1px;
+}
+
+.toolbar .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolbar .checkbox input {
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.toolbar .color-input {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+/* ---------- 数式バー ---------- */
+.formula-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.name-box {
+  width: 110px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font: inherit;
+}
+
+.formula-bar .fx {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 600;
+  font-family: Georgia, serif;
+}
+
+.formula-input {
+  flex: 1;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font: inherit;
+}
+
+.formula-input:focus,
+.name-box:focus {
+  outline: 2px solid var(--green);
+  outline-offset: -1px;
+}
+
+/* ---------- グリッド ---------- */
+.grid-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.grid-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+  background: #fff;
+  /* 指でのスクロールは許し、ダブルタップ拡大や長押しの文字選択は止める */
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.grid-spacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.grid-canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.grid-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+
+/*
+ * セル入力欄。常にマウントされていて、編集していないときは
+ * 1px の透明な箱としてアクティブセルの上に潜んでいる（IME の変換開始点）。
+ */
+.cell-input {
+  position: absolute;
+  z-index: 5;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font: inherit;
+  line-height: 1.3;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  opacity: 0;
+}
+
+.cell-input.editing {
+  padding: 2px 4px;
+  border: 2px solid var(--green);
+  background: #fff;
+  color: #000;
+  caret-color: #000;
+  opacity: 1;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+}
+
+/* ---------- シートタブ ---------- */
+.sheet-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  user-select: none;
+}
+
+.add-sheet {
+  width: 22px;
+  height: 22px;
+  margin: 0 6px 3px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.add-sheet:hover {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.sheet-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sheet-tab:hover {
+  background: #e9e9e9;
+}
+
+.sheet-tab.active {
+  background: var(--panel);
+  border-bottom-color: var(--green);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.sheet-tab .close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.sheet-rename {
+  height: 22px;
+  width: 110px;
+  margin-bottom: 2px;
+  padding: 0 6px;
+  border: 1px solid var(--green);
+  border-radius: 2px;
+  font: inherit;
+}
+
+/* ---------- ステータスバー ---------- */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: calc(22px + env(safe-area-inset-bottom));
+  padding: 0 10px env(safe-area-inset-bottom);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.status-bar .ready {
+  color: var(--text);
+}
+
+.status-bar .spacer {
+  flex: 1;
+}
+
+.status-bar .sel {
+  min-width: 60px;
+  text-align: right;
+}
+
+.warning-banner {
+  padding: 6px 10px;
+  background: #fff4e5;
+  border-bottom: 1px solid #f0c890;
+  color: #8a5a00;
+  font-size: 12px;
+}
+
+/* ---------- 右クリックメニュー ---------- */
+.context-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu button:hover:not(:disabled) {
+  background: var(--green-soft);
+}
+
+.context-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.context-menu .separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+/* ---------- スマホ・タブレット ---------- */
+
+/* 狭い画面：リボンは折り返さず横スクロールにし、要らない文字を隠す */
+@media (max-width: 720px) {
+  .toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar .group {
+    flex: none;
+  }
+
+  .title-bar .app-name {
+    display: none;
+  }
+
+  .name-box {
+    width: 72px;
+  }
+
+  .status-bar {
+    gap: 10px;
+  }
+}
+
+/* タッチが主な入力の端末：押しやすい大きさにする */
+@media (pointer: coarse) {
+  .toolbar button {
+    min-width: 34px;
+    height: 34px;
+  }
+
+  .toolbar .items {
+    min-height: 38px;
+  }
+
+  .toolbar .swatch {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+  }
+
+  .toolbar select,
+  .toolbar .color-input {
+    height: 30px;
+  }
+
+  .file-menu-button {
+    height: 26px;
+  }
+
+  /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大してしまう */
+  .formula-input,
+  .name-box,
+  .sheet-rename {
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .cell-input.editing {
+    font-size: 16px;
+  }
+
+  /* 編集していないときの 1px の入力欄をタップしてキーボードが出ないように */
+  .cell-input:not(.editing) {
+    pointer-events: none;
+  }
+
+  .context-menu button {
+    padding: 10px 16px;
+    font-size: 15px;
+  }
+
+  .sheet-tabs {
+    height: 36px;
+  }
+
+  .sheet-tab {
+    height: 34px;
+  }
+
+  .add-sheet {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 4px;
+  }
+}

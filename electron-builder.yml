@@ -1,0 +1,50 @@
+appId: dev.excella.app
+productName: Excella
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asar: true
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  target:
+    - dmg
+    - zip
+win:
+  icon: build/icon.ico
+  # インストーラ 1 つだけを出す（ポータブル版は作らない）
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+nsis:
+  # ダブルクリックだけで入る 1 クリック方式。管理者権限は要らない（ユーザー単位）
+  oneClick: true
+  perMachine: false
+  # インストール後に自動で起動し、デスクトップとスタートメニューにショートカットを作る
+  runAfterFinish: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Excella
+  # アンインストーラの表示名
+  uninstallDisplayName: ${productName}
+  deleteAppDataOnUninstall: false
+linux:
+  category: Office
+  icon: build/icon.png
+  # ウィンドウと .desktop エントリを結び付ける（無いと起動中の窓が紐づかない）
+  syncDesktopName: true
+  target:
+    - AppImage
+    - deb
+fileAssociations:
+  - ext: xlsx
+    name: Excel ブック
+    role: Editor
+  - ext: csv
+    name: CSV
+    role: Editor

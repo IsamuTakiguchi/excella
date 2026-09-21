@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 整形チェック
+        run: npm run format:check
+
+      - name: 型チェック
+        run: npm run typecheck
+
+      - name: テスト
+        run: npm test
+
+      - name: ビルド
+        run: npm run build
+
+      # Electron を実際に起動して、サンプルデータが描画されるところまで確認する。
+      # ヘッドレスなので xvfb 経由、コンテナ内なので --no-sandbox が要る。
+      - name: 起動スモークテスト
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a npx electron ./out/main/index.js --smoke --no-sandbox \
+            --screenshot smoke.png
+
+      # ファイル関連付け／コマンドライン引数からの起動経路も通す
+      - name: ファイルを開く経路のスモークテスト
+        run: |
+          printf '商品,単価,数量,小計\nりんご,180,12,=B2*C2\n合計,,,=SUM(D2:D2)\n' > sample.csv
+          xvfb-run -a npx electron ./out/main/index.js --smoke --no-sandbox sample.csv \
+            | grep -q '開いたファイル: sample.csv'
+
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot
+          path: smoke.png
+          if-no-files-found: ignore
+
+  # ブラウザ／PWA 版。ビルドしたものを iPhone 相当のタッチ端末として開き、
+  # タップで編集できることまで確認する。成果物は静的ファイルなので
+  # どこのホスティングにも置ける（GitHub Pages へのデプロイは pages.yml）。
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: Chromium を用意
+        run: npx playwright-core install --with-deps chromium
+
+      - name: PWA をビルド
+        run: npm run build:web
+
+      - name: スマホ表示のスモークテスト
+        run: node scripts/web-smoke.mjs --screenshot smoke-mobile.png
+
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-mobile-screenshot
+          path: smoke-mobile.png
+          if-no-files-found: ignore
+
+      - name: Web 版を保存
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Excella-Web
+          path: out/web
+          if-no-files-found: error
+
+  # Windows のインストーラを毎回作り、成果物として保存する。
+  # Release を作らなくても Actions の成果物から exe を取り出せる。
+  # PR と push で二重に走らないよう push のときだけにしている。
+  installer-windows:
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: ビルド
+        run: npm run build
+
+      - name: インストーラを作成
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder --win --publish never
+
+      # Windows ランナーには画面があるので、ビルドしたアプリをそのまま起動して
+      # 描画と日本語入力の検査まで通す。GUI アプリはシェルが待ってくれないので
+      # Start-Process -Wait で終了コードを受け取る
+      - name: Windows で実際に起動して検査
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\win-unpacked\Excella.exe" -ArgumentList "--smoke" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "起動検査に失敗しました (exit=$($p.ExitCode))" }
+          Write-Host "起動検査に通りました"
+
+      - name: インストーラを保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: Excella-Windows-Installer
+          path: dist/*-Setup-*.exe
+          if-no-files-found: error
