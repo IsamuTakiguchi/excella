@@ -139,11 +139,26 @@ export function SheetCanvas(): React.JSX.Element {
     return () => observer.disconnect()
   }, [])
 
+  /*
+   * 端末のピクセル比。ふつうは変わらないが、ブラウザの拡大縮小や
+   * ディスプレイの切り替えで変わる。変わったことに気づかないと、
+   * キャンバスが前の解像度のまま引き伸ばされてぼやける。
+   */
+  const [dpr, setDpr] = useState(() =>
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const onChange = () => setDpr(window.devicePixelRatio || 1)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [dpr])
+
   // --- 描画 -------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
     const width = viewport.width
     const height = viewport.height
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
@@ -200,6 +215,7 @@ export function SheetCanvas(): React.JSX.Element {
     formulaRefs,
     pointingRef,
     zoom,
+    dpr,
     HEADER_W,
     HEADER_H,
   ])

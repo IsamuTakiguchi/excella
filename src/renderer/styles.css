@@ -91,7 +91,8 @@ body,
 
 .title-bar .app-name {
   margin-left: auto;
-  opacity: 0.85;
+  /* 文字に opacity をかけると合成レイヤになり、端末によってぼやける。色で薄くする */
+  color: #d7ead9;
   letter-spacing: 0.02em;
 }
 
@@ -395,7 +396,6 @@ body,
   background: #fff;
   /* 指でのスクロールは許し、ダブルタップ拡大や長押しの文字選択は止める */
   touch-action: pan-x pan-y;
-  -webkit-overflow-scrolling: touch;
   -webkit-touch-callout: none;
   user-select: none;
 }
@@ -781,16 +781,25 @@ body,
     padding: 0 12px;
   }
 
-  /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大してしまう */
+  /*
+   * iOS は 16px 未満の入力欄にフォーカスすると画面ごと拡大する。
+   * user-scalable=no は iOS 10 以降で無視されるため、拡大されたままになり
+   * 画面全体（とくに細い文字の多い上部）がぼやけて見える。
+   * フォーカスされうる入力欄は、状態によらず 16px を下回らせない。
+   */
+  .formula-input,
+  .name-box,
+  .sheet-rename,
+  .cell-input,
+  .toolbar select,
+  .toolbar input {
+    font-size: 16px;
+  }
+
   .formula-input,
   .name-box,
   .sheet-rename {
     height: 32px;
-    font-size: 16px;
-  }
-
-  .cell-input.editing {
-    font-size: 16px;
   }
 
   /* 編集していないときの 1px の入力欄をタップしてキーボードが出ないように */
