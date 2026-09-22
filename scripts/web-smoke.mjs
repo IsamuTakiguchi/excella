@@ -97,6 +97,25 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}${BASE}`, { waitUntil: 'load' })
     await page.waitForFunction(() => Boolean(window.__excellaStore), null, { timeout: 15_000 })
 
+    // スマホ向けのレイアウトになっていること（横にはみ出していない・リボンはタブ式）
+    const layout = await page.evaluate(() => {
+      const toolbar = document.querySelector('.toolbar')
+      const items = toolbar?.querySelector('.items')
+      return {
+        compact: Boolean(toolbar?.classList.contains('compact')),
+        tabs: toolbar ? toolbar.querySelectorAll('.ribbon-tabs button').length : 0,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        itemsOverflow: items ? items.scrollWidth - items.clientWidth : 0,
+      }
+    })
+    if (!layout.compact) fail('狭い画面なのにリボンがタブ式になっていない')
+    if (layout.tabs < 4) fail(`リボンのタブが足りない (${layout.tabs})`)
+    if (layout.pageOverflow > 0) fail(`ページが横にはみ出している (${layout.pageOverflow}px)`)
+    if (layout.itemsOverflow > 24) {
+      fail(`リボンの中身が画面に収まっていない (${layout.itemsOverflow}px)`)
+    }
+    console.log('[web-smoke] スマホ向けレイアウトを確認しました')
+
     // タッチ端末として認識されていること（以降の検査の前提）
     const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
     if (!coarse) fail('タッチ端末としてエミュレートされていない (pointer: coarse が偽)')
@@ -138,6 +157,8 @@ async function main() {
       store.applyBorders('inner', { weight: 'thin' })
       store.applyBorders('outer', { weight: 'thick' })
       store.setSelection({ row: 4, col: 3 })
+      // 以降の座標計算を単純にするため、左上までスクロールを戻す
+      document.querySelector('.grid-scroll').scrollTo({ top: 0, left: 0 })
       return store.displayText({ row: 4, col: 3 })
     })
     if (total !== '¥7,260') fail(`合計セルの表示値が違う: ${total}`)
@@ -148,11 +169,26 @@ async function main() {
     if (await isInputFocused())
       fail('起動直後から入力欄にフォーカスがある（キーボードが出てしまう）')
 
-    // セル B7 の画面座標（見出し 46×24、既定の列幅 88、行高 22）
-    const cell = await page.evaluate(() => {
+    // セル B7 の画面座標。表示倍率ぶん伸びるので、素の寸法（見出し 46×24、
+    // 既定の列幅 88・行高 22）に倍率をかけて出す
+    const metrics = await page.evaluate(() => {
       const r = document.querySelector('.grid-scroll').getBoundingClientRect()
-      return { x: r.left + 46 + 88 + 44, y: r.top + 24 + 22 * 6 + 11 }
+      const z = window.__excellaStore.getState().zoom
+      const scroll = document.querySelector('.grid-scroll')
+      return {
+        left: r.left - scroll.scrollLeft,
+        top: r.top - scroll.scrollTop,
+        headerW: Math.round(46 * z),
+        headerH: Math.round(24 * z),
+        colW: Math.round(88 * z),
+        rowH: Math.round(22 * z),
+      }
     })
+    const cellAt = (row, col) => ({
+      x: metrics.left + metrics.headerW + metrics.colW * col + metrics.colW / 2,
+      y: metrics.top + metrics.headerH + metrics.rowH * row + metrics.rowH / 2,
+    })
+    const cell = cellAt(6, 1)
     await page.touchscreen.tap(cell.x, cell.y)
     await page.waitForTimeout(150)
     const anchor = await page.evaluate(() => window.__excellaStore.getState().selection.anchor)
@@ -177,7 +213,7 @@ async function main() {
     console.log('[web-smoke] タップ→編集→確定の検査に通りました')
 
     // 数式の参照選択：`=` を打ってからセルをタップすると、確定ではなく参照が入る
-    const other = { x: cell.x + 88, y: cell.y - 22 * 3 }
+    const other = cellAt(3, 2)
     await page.touchscreen.tap(other.x, other.y)
     await page.waitForTimeout(150)
     // どのセルに当たったかはアプリに聞く（座標計算を検査側で作り直さない）
@@ -193,7 +229,7 @@ async function main() {
       return letters + (a.row + 1)
     })
     // 空のセルで編集を始める（中身があると `=` が後ろに付いて数式にならない）
-    const empty = { x: cell.x, y: cell.y + 22 * 2 }
+    const empty = cellAt(8, 1)
     await page.touchscreen.tap(empty.x, empty.y)
     await page.waitForTimeout(150)
     await page.touchscreen.tap(empty.x, empty.y) // 再タップで編集開始
@@ -231,6 +267,36 @@ async function main() {
     if (!menuText || !menuText.includes('開く')) fail('ファイルメニューが開かない')
     await page.keyboard.press('Escape')
     console.log('[web-smoke] ファイルメニューの検査に通りました')
+
+    // リボンのタブを切り替えると、その組のボタンが出る
+    await page.tap('.ribbon-tabs button:nth-child(3)') // 罫線
+    await page.waitForTimeout(150)
+    const borderButtons = await page.evaluate(
+      () => document.querySelectorAll('.toolbar .items button').length,
+    )
+    if (borderButtons < 8) fail(`罫線タブのボタンが出ない (${borderButtons})`)
+    await page.tap('.ribbon-tabs button:nth-child(1)') // ホームへ戻す
+    await page.waitForTimeout(150)
+    console.log('[web-smoke] リボンのタブ切り替えの検査に通りました')
+
+    // 表示倍率。タッチ端末は指で押せるよう既定から大きく始まる
+    const zoom = await page.evaluate(() => window.__excellaStore.getState().zoom)
+    if (zoom <= 1) fail(`タッチ端末なのに表示倍率が大きくなっていない (${zoom}）`)
+    const rowHeight = await page.evaluate(() => {
+      const s = window.__excellaStore.getState()
+      return s.zoom * 22
+    })
+    if (rowHeight < 26) fail(`行の高さが指で押すには小さい (${rowHeight}px)`)
+    await page.tap('.status-bar .zoom button:nth-child(1)') // 小さく
+    await page.waitForTimeout(150)
+    const zoomedOut = await page.evaluate(() => window.__excellaStore.getState().zoom)
+    if (!(zoomedOut < zoom)) fail(`表示倍率を小さくできない (${zoom} → ${zoomedOut})`)
+    await page.tap('.status-bar .zoom button.level') // 100% に戻す
+    await page.waitForTimeout(150)
+    if ((await page.evaluate(() => window.__excellaStore.getState().zoom)) !== 1) {
+      fail('表示倍率を 100% に戻せない')
+    }
+    console.log('[web-smoke] 表示倍率の検査に通りました')
 
     // 横幅がはみ出していない（ページ全体が横スクロールしない）
     const overflow = await page.evaluate(

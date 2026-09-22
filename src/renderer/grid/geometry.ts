@@ -3,20 +3,43 @@
  * 行高・列幅は疎な Record で持ち、未指定は既定値を使う。
  */
 
-/** 行番号ヘッダの幅 / 列名ヘッダの高さ（px） */
+/** 行番号ヘッダの幅 / 列名ヘッダの高さ（px、表示倍率 1 のとき） */
 export const HEADER_W = 46
 export const HEADER_H = 24
+
+/** 表示倍率の下限・上限（スマホで指に合わせて広げるため上は大きめ） */
+export const MIN_ZOOM = 0.5
+export const MAX_ZOOM = 2.5
+
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(zoom * 100) / 100))
+}
+
+/** 表示倍率をかけたヘッダの寸法 */
+export function headerSize(zoom: number): { w: number; h: number } {
+  return { w: Math.round(HEADER_W * zoom), h: Math.round(HEADER_H * zoom) }
+}
 
 export type Sizes = {
   /** 累積オフセット。offsets[i] は i 番目の先頭位置、最後に全体長が入る */
   offsets: number[]
 }
 
-export function buildSizes(count: number, custom: Record<number, number>, fallback: number): Sizes {
+/**
+ * 行高・列幅の累積オフセットを作る。
+ * `scale` は表示倍率で、画面上の大きさだけを変える（モデルの値は素のまま）。
+ */
+export function buildSizes(
+  count: number,
+  custom: Record<number, number>,
+  fallback: number,
+  scale = 1,
+): Sizes {
   const offsets = new Array<number>(count + 1)
   offsets[0] = 0
   for (let i = 0; i < count; i++) {
-    offsets[i + 1] = offsets[i] + (custom[i] ?? fallback)
+    offsets[i + 1] = offsets[i] + Math.max(1, Math.round((custom[i] ?? fallback) * scale))
   }
   return { offsets }
 }

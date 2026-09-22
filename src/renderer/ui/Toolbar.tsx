@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { colToLetter } from '@shared/a1'
 import { BORDER_PRESETS, BORDER_WEIGHTS } from '@shared/borders'
 import type { BorderWeight } from '@shared/model'
 import { NUMBER_FORMATS } from '@shared/numberFormat'
+import { COMPACT_RIBBON } from '../device'
 import { focusGrid } from '../grid/focus'
 import { useStore } from '../store/workbookStore'
+import { useMediaQuery } from '../useMediaQuery'
 import {
   AlignCenterIcon,
   AlignLeftIcon,
@@ -29,13 +31,88 @@ const TEXT_COLORS = ['#000000', '#C00000', '#ED7D31', '#FFC000', '#00B050', '#00
 /** Excel でよく使われる薄い塗りつぶし色 */
 const FILL_COLORS = ['', '#FFF2CC', '#FCE4D6', '#DDEBF7', '#E2EFDA', '#EDEDED', '#F8CBAD']
 
-/** Excel のリボンと同じく、ボタンの下にグループ名を出す */
+/** Excel のリボンと同じく、ボタンの下にグループ名を出す（広い画面のとき） */
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="group">
       <div className="items">{children}</div>
       <div className="group-label">{label}</div>
     </div>
+  )
+}
+
+/**
+ * 色のボタン。狭い画面では色見本を並べる場所が無いので、
+ * 押すと下に開くパレットにする（広い画面では見本を横に並べたままにする）。
+ */
+function ColorPalette({
+  colors,
+  title,
+  onPick,
+  children,
+}: {
+  colors: string[]
+  title: string
+  onPick: (color: string) => void
+  children: React.ReactNode
+}) {
+  // 開いた位置は画面に対して固定する。リボンは横スクロールするので、
+  // その中に置くと切り取られて色見本が見えない
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null)
+  const open = at !== null
+  const ref = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: Event) => {
+      if (!ref.current?.contains(e.target as Node)) setAt(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAt(null)
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <span className="color-palette" ref={ref}>
+      <button
+        title={title}
+        className="with-caret"
+        onClick={(e) => {
+          if (open) {
+            setAt(null)
+            return
+          }
+          const r = e.currentTarget.getBoundingClientRect()
+          // 右端からはみ出さないように寄せる（パレットは 4 列 ＝ 約 150px）
+          setAt({ left: Math.min(r.left, window.innerWidth - 158), top: r.bottom + 2 })
+        }}
+      >
+        {children}
+        <span className="caret">▾</span>
+      </button>
+      {at ? (
+        <span className="palette-popover" style={{ left: at.left, top: at.top }}>
+          {colors.map((color) => (
+            <button
+              key={color || 'none'}
+              className={`swatch${color ? '' : ' none'}`}
+              title={color || 'なし'}
+              style={color ? { background: color } : undefined}
+              onClick={() => {
+                onPick(color)
+                setAt(null)
+              }}
+            />
+          ))}
+        </span>
+      ) : null}
+    </span>
   )
 }
 
@@ -56,236 +133,321 @@ export function Toolbar(): React.JSX.Element {
   const [textColor, setTextColor] = useState('#C00000')
   const [fillColor, setFillColor] = useState('#FFF2CC')
 
+  // リボンが 1 段に収まらない画面ではタブ式にする（横スクロールで探させない）
+  const narrow = useMediaQuery(COMPACT_RIBBON)
+  const [tab, setTab] = useState('home')
+
   // 並べ替えの基準はアクティブセルの列（選択範囲の左端からの相対位置で渡す）
   const sortOffset = Math.max(0, Math.min(selection.anchor.col - range.c0, range.c1 - range.c0))
   const sortColumnName = colToLetter(range.c0 + sortOffset)
 
-  return (
-    // ボタンを押してもグリッドのフォーカスを奪わない（Excel と同じ挙動）。
-    // select や色は操作にフォーカスが要るので、変更後にグリッドへ戻す
-    <div
-      className="toolbar"
-      onMouseDown={(e) => {
-        if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+  const applyText = (color: string) => {
+    setTextColor(color)
+    store().applyStyle({ color: color === '#000000' ? undefined : color })
+  }
+  const applyFill = (color: string) => {
+    setFillColor(color)
+    store().applyStyle({ bg: color || undefined })
+  }
+
+  // --- グループの中身。広い画面ではすべて横に並べ、狭い画面ではタブで出し分ける ---
+
+  const undoItems = (
+    <>
+      <button title="元に戻す (Ctrl+Z)" disabled={!canUndo} onClick={() => store().undo()}>
+        <UndoIcon />
+      </button>
+      <button title="やり直し (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => store().redo()}>
+        <RedoIcon />
+      </button>
+    </>
+  )
+
+  const fontItems = (
+    <>
+      <button
+        title="太字 (Ctrl+B)"
+        className={`glyph${style?.bold ? ' active' : ''}`}
+        onClick={() => store().applyStyle({ bold: true }, true)}
+      >
+        <b>B</b>
+      </button>
+      <button
+        title="斜体 (Ctrl+I)"
+        className={`glyph${style?.italic ? ' active' : ''}`}
+        onClick={() => store().applyStyle({ italic: true }, true)}
+      >
+        <i>I</i>
+      </button>
+      <button
+        title="下線 (Ctrl+U)"
+        className={`glyph${style?.underline ? ' active' : ''}`}
+        onClick={() => store().applyStyle({ underline: true }, true)}
+      >
+        <u>U</u>
+      </button>
+      <span className="vsep" />
+      {narrow ? (
+        <>
+          <ColorPalette colors={TEXT_COLORS} title="文字色" onPick={applyText}>
+            <FontColorIcon color={textColor} />
+          </ColorPalette>
+          <ColorPalette colors={FILL_COLORS} title="塗りつぶし" onPick={applyFill}>
+            <FillColorIcon color={fillColor || '#ffffff'} />
+          </ColorPalette>
+        </>
+      ) : (
+        <>
+          <button
+            title={`文字色 ${textColor}`}
+            onClick={() => store().applyStyle({ color: textColor })}
+          >
+            <FontColorIcon color={textColor} />
+          </button>
+          <span className="swatches">
+            {TEXT_COLORS.map((color) => (
+              <button
+                key={color}
+                className="swatch"
+                title={`文字色 ${color}`}
+                style={{ background: color }}
+                onClick={() => applyText(color)}
+              />
+            ))}
+          </span>
+          <span className="vsep" />
+          <button
+            title={`塗りつぶし ${fillColor}`}
+            onClick={() => store().applyStyle({ bg: fillColor || undefined })}
+          >
+            <FillColorIcon color={fillColor || '#ffffff'} />
+          </button>
+          <span className="swatches">
+            {FILL_COLORS.map((color) => (
+              <button
+                key={color || 'none'}
+                className={`swatch${color ? '' : ' none'}`}
+                title={color ? `塗りつぶし ${color}` : '塗りつぶしなし'}
+                style={color ? { background: color } : undefined}
+                onClick={() => applyFill(color)}
+              />
+            ))}
+          </span>
+        </>
+      )}
+    </>
+  )
+
+  const alignItems = (
+    <>
+      <button
+        title="左揃え"
+        className={style?.align === 'left' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'left' })}
+      >
+        <AlignLeftIcon />
+      </button>
+      <button
+        title="中央揃え"
+        className={style?.align === 'center' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'center' })}
+      >
+        <AlignCenterIcon />
+      </button>
+      <button
+        title="右揃え"
+        className={style?.align === 'right' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'right' })}
+      >
+        <AlignRightIcon />
+      </button>
+    </>
+  )
+
+  const mergeItem = (
+    <button title="セルを結合／解除" onClick={() => store().toggleMerge()}>
+      <MergeIcon />
+    </button>
+  )
+
+  const numberItems = (
+    <select
+      title="表示形式"
+      value={style?.numFmt ?? 'General'}
+      onChange={(e) => {
+        store().applyStyle({
+          numFmt: e.target.value === 'General' ? undefined : e.target.value,
+        })
+        focusGrid()
       }}
     >
-      <Group label="元に戻す">
-        <button title="元に戻す (Ctrl+Z)" disabled={!canUndo} onClick={() => store().undo()}>
-          <UndoIcon />
-        </button>
-        <button title="やり直し (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => store().redo()}>
-          <RedoIcon />
-        </button>
-      </Group>
+      {NUMBER_FORMATS.map((fmt) => (
+        <option key={fmt.code} value={fmt.code}>
+          {fmt.label}
+        </option>
+      ))}
+    </select>
+  )
 
-      <Group label="フォント">
+  const borderItems = (
+    <>
+      {BORDER_PRESETS.map((item) => (
         <button
-          title="太字 (Ctrl+B)"
-          className={`glyph${style?.bold ? ' active' : ''}`}
-          onClick={() => store().applyStyle({ bold: true }, true)}
+          key={item.preset}
+          title={item.label}
+          onClick={() =>
+            store().applyBorders(item.preset, { weight: borderWeight, color: borderColor })
+          }
         >
-          <b>B</b>
+          <BorderIcon kind={item.preset} />
         </button>
-        <button
-          title="斜体 (Ctrl+I)"
-          className={`glyph${style?.italic ? ' active' : ''}`}
-          onClick={() => store().applyStyle({ italic: true }, true)}
-        >
-          <i>I</i>
-        </button>
-        <button
-          title="下線 (Ctrl+U)"
-          className={`glyph${style?.underline ? ' active' : ''}`}
-          onClick={() => store().applyStyle({ underline: true }, true)}
-        >
-          <u>U</u>
-        </button>
-        <span className="vsep" />
-        <button
-          title={`文字色 ${textColor}`}
-          onClick={() => store().applyStyle({ color: textColor })}
-        >
-          <FontColorIcon color={textColor} />
-        </button>
-        <span className="swatches">
-          {TEXT_COLORS.map((color) => (
-            <button
-              key={color}
-              className="swatch"
-              title={`文字色 ${color}`}
-              style={{ background: color }}
-              onClick={() => {
-                setTextColor(color)
-                store().applyStyle({ color: color === '#000000' ? undefined : color })
-              }}
-            />
-          ))}
-        </span>
-        <span className="vsep" />
-        <button
-          title={`塗りつぶし ${fillColor}`}
-          onClick={() => store().applyStyle({ bg: fillColor || undefined })}
-        >
-          <FillColorIcon color={fillColor || '#ffffff'} />
-        </button>
-        <span className="swatches">
-          {FILL_COLORS.map((color) => (
-            <button
-              key={color || 'none'}
-              className={`swatch${color ? '' : ' none'}`}
-              title={color ? `塗りつぶし ${color}` : '塗りつぶしなし'}
-              style={color ? { background: color } : undefined}
-              onClick={() => {
-                setFillColor(color)
-                store().applyStyle({ bg: color || undefined })
-              }}
-            />
-          ))}
-        </span>
-      </Group>
-
-      <Group label="配置">
-        <button
-          title="左揃え"
-          className={style?.align === 'left' ? 'active' : ''}
-          onClick={() => store().applyStyle({ align: 'left' })}
-        >
-          <AlignLeftIcon />
-        </button>
-        <button
-          title="中央揃え"
-          className={style?.align === 'center' ? 'active' : ''}
-          onClick={() => store().applyStyle({ align: 'center' })}
-        >
-          <AlignCenterIcon />
-        </button>
-        <button
-          title="右揃え"
-          className={style?.align === 'right' ? 'active' : ''}
-          onClick={() => store().applyStyle({ align: 'right' })}
-        >
-          <AlignRightIcon />
-        </button>
-        <span className="vsep" />
-        <button title="セルを結合／解除" onClick={() => store().toggleMerge()}>
-          <MergeIcon />
-        </button>
-      </Group>
-
-      <Group label="数値">
-        <select
-          title="表示形式"
-          value={style?.numFmt ?? 'General'}
-          onChange={(e) => {
-            store().applyStyle({
-              numFmt: e.target.value === 'General' ? undefined : e.target.value,
-            })
-            focusGrid()
-          }}
-        >
-          {NUMBER_FORMATS.map((fmt) => (
-            <option key={fmt.code} value={fmt.code}>
-              {fmt.label}
-            </option>
-          ))}
-        </select>
-      </Group>
-
-      <Group label="罫線">
-        {BORDER_PRESETS.map((item) => (
-          <button
-            key={item.preset}
-            title={item.label}
-            onClick={() =>
-              store().applyBorders(item.preset, { weight: borderWeight, color: borderColor })
-            }
-          >
-            <BorderIcon kind={item.preset} />
-          </button>
+      ))}
+      <select
+        title="罫線の太さ"
+        value={borderWeight}
+        onChange={(e) => {
+          setBorderWeight(e.target.value as BorderWeight)
+          focusGrid()
+        }}
+      >
+        {BORDER_WEIGHTS.map((w) => (
+          <option key={w.weight} value={w.weight}>
+            {w.label}
+          </option>
         ))}
-        <select
-          title="罫線の太さ"
-          value={borderWeight}
+      </select>
+      <input
+        type="color"
+        className="color-input"
+        title="罫線の色"
+        value={borderColor}
+        onChange={(e) => setBorderColor(e.target.value)}
+        onBlur={focusGrid}
+      />
+    </>
+  )
+
+  const cellItems = (
+    <>
+      <button
+        title="行を挿入"
+        onClick={() => store().insertRows(range.r0, range.r1 - range.r0 + 1)}
+      >
+        <InsertRowIcon />
+      </button>
+      <button
+        title="行を削除"
+        onClick={() => store().deleteRows(range.r0, range.r1 - range.r0 + 1)}
+      >
+        <DeleteRowIcon />
+      </button>
+      <button
+        title="列を挿入"
+        onClick={() => store().insertColumns(range.c0, range.c1 - range.c0 + 1)}
+      >
+        <InsertColIcon />
+      </button>
+      <button
+        title="列を削除"
+        onClick={() => store().deleteColumns(range.c0, range.c1 - range.c0 + 1)}
+      >
+        <DeleteColIcon />
+      </button>
+      <span className="vsep" />
+      <button
+        title="アクティブセルの左上でウィンドウ枠を固定／解除"
+        onClick={() => store().toggleFreeze()}
+      >
+        <FreezeIcon />
+      </button>
+    </>
+  )
+
+  const sortItems = (
+    <>
+      <button
+        title={`${sortColumnName} 列（アクティブセルの列）で昇順に並べ替え`}
+        onClick={() => store().sortSelection(sortOffset, true, skipHeader)}
+      >
+        <SortAscIcon />
+      </button>
+      <button
+        title={`${sortColumnName} 列（アクティブセルの列）で降順に並べ替え`}
+        onClick={() => store().sortSelection(sortOffset, false, skipHeader)}
+      >
+        <SortDescIcon />
+      </button>
+      <label className="checkbox" title="選択範囲の先頭行を見出しとして並べ替えの対象から外す">
+        <input
+          type="checkbox"
+          checked={skipHeader}
           onChange={(e) => {
-            setBorderWeight(e.target.value as BorderWeight)
+            setSkipHeader(e.target.checked)
             focusGrid()
           }}
-        >
-          {BORDER_WEIGHTS.map((w) => (
-            <option key={w.weight} value={w.weight}>
-              {w.label}
-            </option>
-          ))}
-        </select>
-        <input
-          type="color"
-          className="color-input"
-          title="罫線の色"
-          value={borderColor}
-          onChange={(e) => setBorderColor(e.target.value)}
-          onBlur={focusGrid}
         />
-      </Group>
+        見出し行
+      </label>
+    </>
+  )
 
-      <Group label="セル">
-        <button
-          title="行を挿入"
-          onClick={() => store().insertRows(range.r0, range.r1 - range.r0 + 1)}
-        >
-          <InsertRowIcon />
-        </button>
-        <button
-          title="行を削除"
-          onClick={() => store().deleteRows(range.r0, range.r1 - range.r0 + 1)}
-        >
-          <DeleteRowIcon />
-        </button>
-        <button
-          title="列を挿入"
-          onClick={() => store().insertColumns(range.c0, range.c1 - range.c0 + 1)}
-        >
-          <InsertColIcon />
-        </button>
-        <button
-          title="列を削除"
-          onClick={() => store().deleteColumns(range.c0, range.c1 - range.c0 + 1)}
-        >
-          <DeleteColIcon />
-        </button>
+  // ボタンを押してもグリッドのフォーカスを奪わない（Excel と同じ挙動）。
+  // select や色は操作にフォーカスが要るので、変更後にグリッドへ戻す
+  const keepFocus = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+  }
+
+  if (narrow) {
+    const tabs = [
+      { key: 'home', label: 'ホーム', items: [undoItems, fontItems, alignItems] },
+      { key: 'number', label: '数値', items: [numberItems] },
+      { key: 'border', label: '罫線', items: [borderItems] },
+      { key: 'cells', label: 'セル', items: [cellItems, mergeItem, sortItems] },
+    ]
+    const current = tabs.find((t) => t.key === tab) ?? tabs[0]
+    return (
+      <div className="toolbar compact" onMouseDown={keepFocus}>
+        <div className="ribbon-tabs" role="tablist">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={t.key === current.key}
+              className={t.key === current.key ? 'active' : ''}
+              onClick={() => {
+                setTab(t.key)
+                focusGrid()
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="items">
+          {current.items.map((items, index) => (
+            <span className="section" key={index}>
+              {index > 0 ? <span className="vsep" /> : null}
+              {items}
+            </span>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="toolbar" onMouseDown={keepFocus}>
+      <Group label="元に戻す">{undoItems}</Group>
+      <Group label="フォント">{fontItems}</Group>
+      <Group label="配置">
+        {alignItems}
         <span className="vsep" />
-        <button
-          title="アクティブセルの左上でウィンドウ枠を固定／解除"
-          onClick={() => store().toggleFreeze()}
-        >
-          <FreezeIcon />
-        </button>
+        {mergeItem}
       </Group>
-
-      <Group label="並べ替え">
-        <button
-          title={`${sortColumnName} 列（アクティブセルの列）で昇順に並べ替え`}
-          onClick={() => store().sortSelection(sortOffset, true, skipHeader)}
-        >
-          <SortAscIcon />
-        </button>
-        <button
-          title={`${sortColumnName} 列（アクティブセルの列）で降順に並べ替え`}
-          onClick={() => store().sortSelection(sortOffset, false, skipHeader)}
-        >
-          <SortDescIcon />
-        </button>
-        <label className="checkbox" title="選択範囲の先頭行を見出しとして並べ替えの対象から外す">
-          <input
-            type="checkbox"
-            checked={skipHeader}
-            onChange={(e) => {
-              setSkipHeader(e.target.checked)
-              focusGrid()
-            }}
-          />
-          見出し行
-        </label>
-      </Group>
+      <Group label="数値">{numberItems}</Group>
+      <Group label="罫線">{borderItems}</Group>
+      <Group label="セル">{cellItems}</Group>
+      <Group label="並べ替え">{sortItems}</Group>
     </div>
   )
 }

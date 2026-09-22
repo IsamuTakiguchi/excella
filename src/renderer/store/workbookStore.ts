@@ -41,6 +41,8 @@ import { formatCellValue } from '@shared/numberFormat'
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
 import { canInsertRef } from '@shared/formulaRefs'
+import { defaultZoom } from '../device'
+import { clampZoom } from '../grid/geometry'
 import { bridge } from '../bridge'
 import { Engine, type DisplayValue } from '../engine/hf'
 
@@ -97,6 +99,11 @@ type State = {
   editing: Editing
   /** 数式の参照選択中だけ非 null（編集中のみ） */
   pointing: Pointing
+  /**
+   * 画面の表示倍率。モデルには入れない（ファイルではなく見え方の設定）。
+   * 行高・列幅の値はそのままで、描画とヒットテストだけが倍率ぶん伸びる。
+   */
+  zoom: number
   clipboard: ClipboardBlock | null
   filePath: string | null
   fileName: string
@@ -135,6 +142,9 @@ type Actions = {
   setPointing(anchor: Addr, focus?: Addr): void
   /** 参照するセルを動かす。extend（Shift）なら範囲として広げる */
   movePointing(dRow: number, dCol: number, extend: boolean): void
+
+  /** 表示倍率を変える（範囲外は丸める） */
+  setZoom(zoom: number): void
 
   setCellInput(addr: Addr, text: string): void
   clearSelection(): void
@@ -391,6 +401,7 @@ export const useStore = create<Store>((set, get) => {
     selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
     editing: null,
     pointing: null,
+    zoom: defaultZoom(),
     clipboard: null,
     filePath: null,
     fileName: '新しいブック',
@@ -527,6 +538,8 @@ export const useStore = create<Store>((set, get) => {
     },
 
     cancelEdit: () => set({ editing: null, pointing: null }),
+
+    setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
     startPointing: (addr, caret) => {
       const editing = get().editing

@@ -15,15 +15,16 @@
   --muted: #605e5c;
   --accent: var(--green);
   --accent-soft: var(--green-soft);
-  font-family:
-    'Segoe UI',
-    'Yu Gothic UI',
-    'Meiryo UI',
-    'Hiragino Sans',
-    'Noto Sans JP',
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  /*
+   * OS の標準 UI フォントを先に置く。-apple-system を後ろにすると、
+   * iOS では欧文まで和文フォント（Hiragino Sans）で描かれ、
+   * 小さい文字がぼやけて見える。painter.ts の FONT_FAMILY と同じ順序にすること
+   * （ずれるとキャンバスの文字と UI の文字で書体が変わる）。
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Yu Gothic UI', 'Meiryo UI', 'Hiragino Sans',
+    'Noto Sans JP', sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
   color: var(--text);
 }
@@ -91,7 +92,8 @@ body,
 
 .title-bar .app-name {
   margin-left: auto;
-  opacity: 0.85;
+  /* 文字に opacity をかけると合成レイヤになり、端末によってぼやける。色で薄くする */
+  color: #d7ead9;
   letter-spacing: 0.02em;
 }
 
@@ -244,6 +246,101 @@ body,
   cursor: pointer;
 }
 
+/* リボンのタブ（狭い画面）。横スクロールで機能を探させないための切り替え */
+.toolbar.compact {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.toolbar.compact .ribbon-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px 6px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar.compact .ribbon-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar.compact .ribbon-tabs button {
+  height: 28px;
+  min-width: 0;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 3px 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.toolbar.compact .ribbon-tabs button.active {
+  border-bottom-color: var(--green);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.toolbar.compact .items {
+  gap: 2px;
+  padding: 3px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar.compact .items::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar.compact .section {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 色のパレット（狭い画面では押すと開く） */
+.color-palette {
+  position: relative;
+  display: inline-flex;
+}
+
+.toolbar button.with-caret {
+  gap: 1px;
+  padding: 0 2px;
+}
+
+.toolbar .caret {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.palette-popover {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.palette-popover .swatch {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}
+
 /* ---------- 数式バー ---------- */
 .formula-bar {
   display: flex;
@@ -300,7 +397,6 @@ body,
   background: #fff;
   /* 指でのスクロールは許し、ダブルタップ拡大や長押しの文字選択は止める */
   touch-action: pan-x pan-y;
-  -webkit-overflow-scrolling: touch;
   -webkit-touch-callout: none;
   user-select: none;
 }
@@ -452,6 +548,41 @@ body,
   flex: 1;
 }
 
+.status-bar .zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status-bar .zoom button {
+  min-width: 22px;
+  height: 18px;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.status-bar .zoom button.level {
+  min-width: 42px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-bar .zoom button:hover:not(:disabled) {
+  background: var(--green-soft);
+  border-color: var(--green-soft-2);
+  color: var(--green-dark);
+}
+
+.status-bar .zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .status-bar .sel {
   min-width: 60px;
   text-align: right;
@@ -507,32 +638,112 @@ body,
 
 /* ---------- スマホ・タブレット ---------- */
 
-/* 狭い画面：リボンは折り返さず横スクロールにし、要らない文字を隠す */
+/*
+ * 狭い画面（スマホ・小さいタブレット）。
+ * リボンは JS 側でタブ式に切り替わるので、ここでは詰め方だけを調整する。
+ */
 @media (max-width: 720px) {
-  .toolbar {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .toolbar::-webkit-scrollbar {
-    display: none;
-  }
-
-  .toolbar .group {
-    flex: none;
+  .title-bar {
+    gap: 6px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
   }
 
   .title-bar .app-name {
     display: none;
   }
 
+  .title-bar .file {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .formula-bar {
+    gap: 4px;
+    padding: 4px 6px;
+  }
+
   .name-box {
-    width: 72px;
+    width: 64px;
+    flex: none;
+  }
+
+  .formula-bar .fx {
+    display: none;
   }
 
   .status-bar {
     gap: 10px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+    font-size: 11px;
+  }
+
+  .status-bar .ready {
+    flex: none;
+  }
+
+  .status-bar .sel {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .sheet-tabs {
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+}
+
+/* 横向きのスマホなど、縦が短いとき。1 行でも多くグリッドに譲る */
+@media (max-height: 500px) {
+  .title-bar {
+    height: calc(26px + env(safe-area-inset-top));
+    font-size: 11px;
+  }
+
+  .toolbar.compact .ribbon-tabs {
+    padding-top: 1px;
+  }
+
+  .toolbar.compact .ribbon-tabs button {
+    height: 24px;
+  }
+
+  .toolbar .group-label {
+    display: none;
+  }
+
+  .toolbar button {
+    min-width: 30px;
+    height: 30px;
+  }
+
+  .toolbar.compact .items {
+    min-height: 32px;
+    padding: 1px 6px;
+  }
+
+  .formula-bar {
+    padding: 2px 6px;
+  }
+
+  .formula-input,
+  .name-box {
+    height: 28px;
+  }
+
+  .sheet-tabs {
+    height: 26px;
+  }
+
+  .sheet-tab {
+    height: 24px;
+  }
+
+  .status-bar {
+    height: calc(20px + env(safe-area-inset-bottom));
   }
 }
 
@@ -541,6 +752,10 @@ body,
   .toolbar button {
     min-width: 34px;
     height: 34px;
+  }
+
+  .toolbar.compact .items {
+    min-height: 40px;
   }
 
   .toolbar .items {
@@ -558,20 +773,34 @@ body,
     height: 30px;
   }
 
-  .file-menu-button {
-    height: 26px;
+  .toolbar.compact select {
+    max-width: 150px;
   }
 
-  /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大してしまう */
+  .file-menu-button {
+    height: 26px;
+    padding: 0 12px;
+  }
+
+  /*
+   * iOS は 16px 未満の入力欄にフォーカスすると画面ごと拡大する。
+   * user-scalable=no は iOS 10 以降で無視されるため、拡大されたままになり
+   * 画面全体（とくに細い文字の多い上部）がぼやけて見える。
+   * フォーカスされうる入力欄は、状態によらず 16px を下回らせない。
+   */
+  .formula-input,
+  .name-box,
+  .sheet-rename,
+  .cell-input,
+  .toolbar select,
+  .toolbar input {
+    font-size: 16px;
+  }
+
   .formula-input,
   .name-box,
   .sheet-rename {
     height: 32px;
-    font-size: 16px;
-  }
-
-  .cell-input.editing {
-    font-size: 16px;
   }
 
   /* 編集していないときの 1px の入力欄をタップしてキーボードが出ないように */
@@ -590,11 +819,21 @@ body,
 
   .sheet-tab {
     height: 34px;
+    padding: 0 16px;
   }
 
   .add-sheet {
     width: 28px;
     height: 28px;
     margin-bottom: 4px;
+  }
+
+  .status-bar {
+    height: calc(26px + env(safe-area-inset-bottom));
+  }
+
+  .status-bar .zoom button {
+    min-width: 30px;
+    height: 24px;
   }
 }

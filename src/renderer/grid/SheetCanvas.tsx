@@ -7,8 +7,7 @@ import {
   autofitWidth,
   borderHit,
   buildSizes,
-  HEADER_H,
-  HEADER_W,
+  headerSize,
   indexAt,
   offsetOf,
   sizeOf,
@@ -16,7 +15,8 @@ import {
 } from './geometry'
 import { cellFontOf, FILL_HANDLE_SIZE, paint, REF_COLORS } from './painter'
 import { CellInput } from './CellInput'
-import { focusGrid, gridInput, isGridInput, isTouchDevice } from './focus'
+import { isTouchDevice } from '../device'
+import { focusGrid, gridInput, isGridInput } from './focus'
 import { ContextMenu, type ContextMenuItem, type ContextMenuState } from '../ui/ContextMenu'
 
 type DragState =
@@ -83,6 +83,7 @@ export function SheetCanvas(): React.JSX.Element {
   const selection = useStore((s) => s.selection)
   const editing = useStore((s) => s.editing)
   const pointing = useStore((s) => s.pointing)
+  const zoom = useStore((s) => s.zoom)
   const clipboard = useStore((s) => s.clipboard)
   const model = useStore((s) => s.model)
 
@@ -91,13 +92,15 @@ export function SheetCanvas(): React.JSX.Element {
     [model],
   )
 
+  // 表示倍率は描画とヒットテストにだけかける（モデルの行高・列幅は素のまま）
+  const { w: HEADER_W, h: HEADER_H } = useMemo(() => headerSize(zoom), [zoom])
   const cols = useMemo(
-    () => buildSizes(sheet.colCount, sheet.colWidths, DEFAULT_COL_WIDTH),
-    [sheet.colCount, sheet.colWidths],
+    () => buildSizes(sheet.colCount, sheet.colWidths, DEFAULT_COL_WIDTH, zoom),
+    [sheet.colCount, sheet.colWidths, zoom],
   )
   const rows = useMemo(
-    () => buildSizes(sheet.rowCount, sheet.rowHeights, DEFAULT_ROW_HEIGHT),
-    [sheet.rowCount, sheet.rowHeights],
+    () => buildSizes(sheet.rowCount, sheet.rowHeights, DEFAULT_ROW_HEIGHT, zoom),
+    [sheet.rowCount, sheet.rowHeights, zoom],
   )
   const merges = useMemo(
     () => sheet.merges.map(a1ToRange).filter((r): r is Range => r !== null),
@@ -136,11 +139,26 @@ export function SheetCanvas(): React.JSX.Element {
     return () => observer.disconnect()
   }, [])
 
+  /*
+   * 端末のピクセル比。ふつうは変わらないが、ブラウザの拡大縮小や
+   * ディスプレイの切り替えで変わる。変わったことに気づかないと、
+   * キャンバスが前の解像度のまま引き伸ばされてぼやける。
+   */
+  const [dpr, setDpr] = useState(() =>
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const onChange = () => setDpr(window.devicePixelRatio || 1)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [dpr])
+
   // --- 描画 -------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
     const width = viewport.width
     const height = viewport.height
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
@@ -178,6 +196,9 @@ export function SheetCanvas(): React.JSX.Element {
       fillPreview,
       formulaRefs,
       pointing: pointingRef,
+      headerW: HEADER_W,
+      headerH: HEADER_H,
+      zoom,
     })
   }, [
     revision,
@@ -193,6 +214,10 @@ export function SheetCanvas(): React.JSX.Element {
     fillPreview,
     formulaRefs,
     pointingRef,
+    zoom,
+    dpr,
+    HEADER_W,
+    HEADER_H,
   ])
 
   // --- アクティブセルを可視域に入れる -----------------------------------
@@ -227,7 +252,17 @@ export function SheetCanvas(): React.JSX.Element {
     if (nextX !== el.scrollLeft || nextY !== el.scrollTop) {
       el.scrollTo({ left: Math.max(0, nextX), top: Math.max(0, nextY) })
     }
-  }, [selection.focus, pointing, cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount])
+  }, [
+    selection.focus,
+    pointing,
+    cols,
+    rows,
+    sheet.frozen,
+    sheet.colCount,
+    sheet.rowCount,
+    HEADER_W,
+    HEADER_H,
+  ])
 
   // --- 座標変換 ---------------------------------------------------------
 
@@ -255,7 +290,7 @@ export function SheetCanvas(): React.JSX.Element {
         y: localY - HEADER_H + scrollY,
       }
     },
-    [cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount],
+    [cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount, HEADER_W, HEADER_H],
   )
 
   const zoneOf = useCallback(
@@ -266,7 +301,7 @@ export function SheetCanvas(): React.JSX.Element {
       if (localX < HEADER_W) return { zone: 'row-header' as const, x, y }
       return { zone: 'body' as const, x, y }
     },
-    [toGrid],
+    [toGrid, HEADER_W, HEADER_H],
   )
 
   const toAddr = useCallback(
@@ -355,7 +390,7 @@ export function SheetCanvas(): React.JSX.Element {
       return
     }
     if (zone === 'col-header') {
-      const hit = borderHit(cols, x)
+      const hit = borderHit(cols, x, isTouchDevice() ? 10 : 4)
       if (hit !== null) {
         dragRef.current = {
           kind: 'resize-col',
@@ -371,7 +406,7 @@ export function SheetCanvas(): React.JSX.Element {
       return
     }
     if (zone === 'row-header') {
-      const hit = borderHit(rows, y)
+      const hit = borderHit(rows, y, isTouchDevice() ? 10 : 4)
       if (hit !== null) {
         dragRef.current = {
           kind: 'resize-row',
@@ -436,8 +471,10 @@ export function SheetCanvas(): React.JSX.Element {
 
     if (!drag) {
       const { zone, x, y } = zoneOf(e.clientX, e.clientY)
-      if (zone === 'col-header' && borderHit(cols, x) !== null) setCursor('col-resize')
-      else if (zone === 'row-header' && borderHit(rows, y) !== null) setCursor('row-resize')
+      if (zone === 'col-header' && borderHit(cols, x, isTouchDevice() ? 10 : 4) !== null)
+        setCursor('col-resize')
+      else if (zone === 'row-header' && borderHit(rows, y, isTouchDevice() ? 10 : 4) !== null)
+        setCursor('row-resize')
       else if (zone === 'body' && isOnFillHandle(x, y)) setCursor('crosshair')
       else setCursor('default')
       return
@@ -569,13 +606,13 @@ export function SheetCanvas(): React.JSX.Element {
     // ここで編集を始め直すと、書きかけの数式が消えてしまう
     if (store.pointing) return
     if (zone === 'col-header') {
-      const hit = borderHit(cols, x)
+      const hit = borderHit(cols, x, isTouchDevice() ? 10 : 4)
       // Excel と同じく、境界のダブルクリックは内容に合わせた幅にする
       if (hit !== null) store.setColWidth(hit, autofitColumn(hit))
       return
     }
     if (zone === 'row-header') {
-      const hit = borderHit(rows, y)
+      const hit = borderHit(rows, y, isTouchDevice() ? 10 : 4)
       if (hit !== null) store.setRowHeight(hit, DEFAULT_ROW_HEIGHT)
       return
     }
@@ -627,7 +664,10 @@ export function SheetCanvas(): React.JSX.Element {
         return
       case 'PageDown':
       case 'PageUp': {
-        const step = Math.max(1, Math.floor((viewport.height - HEADER_H) / DEFAULT_ROW_HEIGHT) - 1)
+        const step = Math.max(
+          1,
+          Math.floor((viewport.height - HEADER_H) / (DEFAULT_ROW_HEIGHT * zoom)) - 1,
+        )
         store.moveSelection(e.key === 'PageDown' ? step : -step, 0, e.shiftKey)
         e.preventDefault()
         return

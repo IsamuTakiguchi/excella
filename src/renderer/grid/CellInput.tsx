@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Addr } from '@shared/a1'
 import { isFormula } from '@shared/formulaRefs'
 import { pointingText, useStore, type Editing } from '../store/workbookStore'
-import { isTouchDevice } from './focus'
+import { isTouchDevice } from '../device'
 
 type Props = {
   editing: Editing

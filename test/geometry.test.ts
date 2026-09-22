@@ -4,7 +4,13 @@ import {
   AUTOFIT_PADDING,
   borderHit,
   buildSizes,
+  clampZoom,
+  HEADER_H,
+  HEADER_W,
+  headerSize,
   indexAt,
+  MAX_ZOOM,
+  MIN_ZOOM,
   offsetOf,
   sizeOf,
   totalSize,
@@ -72,5 +78,39 @@ describe('autofitWidth', () => {
 
   it('空の列でも下限を返す', () => {
     expect(autofitWidth(0, () => 0)).toBe(40)
+  })
+})
+
+describe('表示倍率', () => {
+  it('倍率をかけた行高・列幅になる', () => {
+    const sizes = buildSizes(3, { 1: 40 }, 20, 1.5)
+    expect(sizeOf(sizes, 0)).toBe(30)
+    expect(sizeOf(sizes, 1)).toBe(60)
+    expect(totalSize(sizes)).toBe(120)
+  })
+
+  it('倍率を省くと素の値のまま（既定の見え方を変えない）', () => {
+    const sizes = buildSizes(2, {}, 22)
+    expect(sizeOf(sizes, 0)).toBe(22)
+    expect(totalSize(sizes)).toBe(44)
+  })
+
+  it('縮めすぎても 1px は残る（0 幅の行ができて座標計算が壊れないように）', () => {
+    const sizes = buildSizes(2, { 0: 1 }, 1, 0.1)
+    expect(sizeOf(sizes, 0)).toBe(1)
+  })
+
+  it('ヘッダも倍率ぶん大きくなる', () => {
+    expect(headerSize(1)).toEqual({ w: HEADER_W, h: HEADER_H })
+    expect(headerSize(2)).toEqual({ w: HEADER_W * 2, h: HEADER_H * 2 })
+  })
+
+  it('倍率は上下限に丸める', () => {
+    expect(clampZoom(1.25)).toBe(1.25)
+    expect(clampZoom(99)).toBe(MAX_ZOOM)
+    expect(clampZoom(0)).toBe(MIN_ZOOM)
+    expect(clampZoom(Number.NaN)).toBe(1)
+    // 0.1 刻みで足したときの誤差を残さない
+    expect(clampZoom(1.3000000000000003)).toBe(1.3)
   })
 })
