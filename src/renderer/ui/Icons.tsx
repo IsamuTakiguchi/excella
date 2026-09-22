@@ -13,7 +13,12 @@ const base = {
   viewBox: '0 0 16 16',
   fill: 'none',
   stroke: 'currentColor',
-  strokeWidth: 1.5,
+  /*
+   * 線幅 1.5 は高解像度の画面でピクセルの境目に半端に乗り、輪郭がにじむ
+   * （端末ピクセル比 3 なら 4.5px ぶん）。2 なら 1x・2x・3x のどれでも
+   * 整数ピクセルに収まるので、小さくても輪郭がはっきりする。
+   */
+  strokeWidth: 2,
   strokeLinecap: 'round',
   strokeLinejoin: 'round',
   'aria-hidden': true,

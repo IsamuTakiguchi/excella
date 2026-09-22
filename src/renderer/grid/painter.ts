@@ -77,8 +77,9 @@ const COLORS = {
   marquee: '#107c41',
 }
 
+/** styles.css の --font-sans と同じ順序にすること（ずれると UI と字が変わる） */
 const FONT_FAMILY =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif'
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Meiryo UI", "Hiragino Sans", "Noto Sans JP", sans-serif'
 const headerFont = (zoom: number, bold: boolean): string =>
   `${bold ? 700 : 500} ${Math.round(12 * zoom)}px ${FONT_FAMILY}`
 
