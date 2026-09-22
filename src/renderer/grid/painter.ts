@@ -15,7 +15,7 @@ import {
   type CellBorders,
   type CellStyle,
 } from '@shared/model'
-import { HEADER_H, HEADER_W, offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
+import { offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
 
 export type PaintContext = {
   ctx: CanvasRenderingContext2D
@@ -46,6 +46,11 @@ export type PaintContext = {
   formulaRefs?: Array<{ range: Range; color: string }>
   /** 数式の参照選択（ポイントモード）で今選んでいる参照 */
   pointing?: { range: Range; color: string } | null
+  /** 表示倍率をかけたヘッダの寸法（行高・列幅は cols / rows 側で倍率済み） */
+  headerW: number
+  headerH: number
+  /** 表示倍率。文字の大きさに使う */
+  zoom: number
 }
 
 /**
@@ -74,16 +79,19 @@ const COLORS = {
 
 const FONT_FAMILY =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif'
-const HEADER_FONT = `500 12px ${FONT_FAMILY}`
-const HEADER_FONT_BOLD = `700 12px ${FONT_FAMILY}`
+const headerFont = (zoom: number, bold: boolean): string =>
+  `${bold ? 700 : 500} ${Math.round(12 * zoom)}px ${FONT_FAMILY}`
 
-/** セルのフォント指定。自動調整の計測でも同じものを使う */
+/**
+ * セルのフォント指定。自動調整の計測でも同じものを使う。
+ * 列幅はモデルの値（倍率なし）で持つので、計測は常に倍率 1 で行う。
+ */
 export function cellFontOf(style: CellStyle | undefined): string {
-  return cellFont(style)
+  return cellFont(style, 1)
 }
 
-function cellFont(style: CellStyle | undefined): string {
-  const size = style?.fontSize ?? DEFAULT_FONT_SIZE
+function cellFont(style: CellStyle | undefined, zoom: number): string {
+  const size = (style?.fontSize ?? DEFAULT_FONT_SIZE) * zoom
   const weight = style?.bold ? '600' : '400'
   const italic = style?.italic ? 'italic ' : ''
   return `${italic}${weight} ${size}px ${FONT_FAMILY}`
@@ -132,8 +140,8 @@ export function paint(p: PaintContext): void {
   ctx.fillStyle = COLORS.cellBg
   ctx.fillRect(0, 0, width, height)
 
-  const viewW = width - HEADER_W
-  const viewH = height - HEADER_H
+  const viewW = width - p.headerW
+  const viewH = height - p.headerH
 
   const frozenCols = Math.min(p.frozen?.cols ?? 0, p.colCount)
   const frozenRows = Math.min(p.frozen?.rows ?? 0, p.rowCount)
@@ -151,8 +159,8 @@ export function paint(p: PaintContext): void {
 
   const panes: Pane[] = [
     {
-      x: HEADER_W + frozenW,
-      y: HEADER_H + frozenH,
+      x: p.headerW + frozenW,
+      y: p.headerH + frozenH,
       w: viewW - frozenW,
       h: viewH - frozenH,
       scrollX,
@@ -163,8 +171,8 @@ export function paint(p: PaintContext): void {
   ]
   if (frozenCols > 0) {
     panes.push({
-      x: HEADER_W,
-      y: HEADER_H + frozenH,
+      x: p.headerW,
+      y: p.headerH + frozenH,
       w: frozenW,
       h: viewH - frozenH,
       scrollX: 0,
@@ -175,8 +183,8 @@ export function paint(p: PaintContext): void {
   }
   if (frozenRows > 0) {
     panes.push({
-      x: HEADER_W + frozenW,
-      y: HEADER_H,
+      x: p.headerW + frozenW,
+      y: p.headerH,
       w: viewW - frozenW,
       h: frozenH,
       scrollX,
@@ -187,8 +195,8 @@ export function paint(p: PaintContext): void {
   }
   if (frozenCols > 0 && frozenRows > 0) {
     panes.push({
-      x: HEADER_W,
-      y: HEADER_H,
+      x: p.headerW,
+      y: p.headerH,
       w: frozenW,
       h: frozenH,
       scrollX: 0,
@@ -201,23 +209,23 @@ export function paint(p: PaintContext): void {
   for (const pane of panes) paintPane(p, pane)
 
   // --- ヘッダ ---------------------------------------------------------
-  ctx.font = HEADER_FONT
+  ctx.font = headerFont(p.zoom, false)
   ctx.textBaseline = 'middle'
 
-  paintColHeader(p, HEADER_W + frozenW, viewW - frozenW, scrollX, movingCols)
-  if (frozenCols > 0) paintColHeader(p, HEADER_W, frozenW, 0, fixedCols)
-  paintRowHeader(p, HEADER_H + frozenH, viewH - frozenH, scrollY, movingRows)
-  if (frozenRows > 0) paintRowHeader(p, HEADER_H, frozenH, 0, fixedRows)
+  paintColHeader(p, p.headerW + frozenW, viewW - frozenW, scrollX, movingCols)
+  if (frozenCols > 0) paintColHeader(p, p.headerW, frozenW, 0, fixedCols)
+  paintRowHeader(p, p.headerH + frozenH, viewH - frozenH, scrollY, movingRows)
+  if (frozenRows > 0) paintRowHeader(p, p.headerH, frozenH, 0, fixedRows)
 
   // 左上の角
   ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(0, 0, HEADER_W, HEADER_H)
+  ctx.fillRect(0, 0, p.headerW, p.headerH)
   ctx.strokeStyle = COLORS.headerBorder
   ctx.beginPath()
-  ctx.moveTo(HEADER_W + 0.5, 0)
-  ctx.lineTo(HEADER_W + 0.5, height)
-  ctx.moveTo(0, HEADER_H + 0.5)
-  ctx.lineTo(width, HEADER_H + 0.5)
+  ctx.moveTo(p.headerW + 0.5, 0)
+  ctx.lineTo(p.headerW + 0.5, height)
+  ctx.moveTo(0, p.headerH + 0.5)
+  ctx.lineTo(width, p.headerH + 0.5)
   ctx.stroke()
 
   // 固定の境界線
@@ -226,12 +234,12 @@ export function paint(p: PaintContext): void {
     ctx.lineWidth = 1
     ctx.beginPath()
     if (frozenCols > 0) {
-      const x = Math.floor(HEADER_W + frozenW) + 0.5
+      const x = Math.floor(p.headerW + frozenW) + 0.5
       ctx.moveTo(x, 0)
       ctx.lineTo(x, height)
     }
     if (frozenRows > 0) {
-      const y = Math.floor(HEADER_H + frozenH) + 0.5
+      const y = Math.floor(p.headerH + frozenH) + 0.5
       ctx.moveTo(0, y)
       ctx.lineTo(width, y)
     }
@@ -494,7 +502,7 @@ function drawCellText(p: PaintContext, r: number, c: number, merge: Range | null
   ctx.beginPath()
   ctx.rect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
   ctx.clip()
-  ctx.font = cellFont(style)
+  ctx.font = cellFont(style, p.zoom)
   ctx.fillStyle = style?.color ?? COLORS.text
 
   const align = style?.align ?? (p.isNumeric(r, c) ? 'right' : 'left')
@@ -512,7 +520,8 @@ function drawCellText(p: PaintContext, r: number, c: number, merge: Range | null
 
   if (style?.underline) {
     const metrics = ctx.measureText(text)
-    const uy = Math.round(rect.y + rect.h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * 0.45) + 0.5
+    const uy =
+      Math.round(rect.y + rect.h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * p.zoom * 0.45) + 0.5
     const ux =
       align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
     ctx.strokeStyle = style.color ?? COLORS.text
@@ -531,10 +540,10 @@ function paintColHeader(p: PaintContext, x0: number, w: number, scrollX: number,
 
   ctx.save()
   ctx.beginPath()
-  ctx.rect(x0, 0, w, HEADER_H)
+  ctx.rect(x0, 0, w, p.headerH)
   ctx.clip()
   ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(x0, 0, w, HEADER_H)
+  ctx.fillRect(x0, 0, w, p.headerH)
   ctx.translate(x0 - scrollX, 0)
   ctx.textAlign = 'center'
   for (let c = span.first; c <= span.last; c++) {
@@ -544,17 +553,17 @@ function paintColHeader(p: PaintContext, x0: number, w: number, scrollX: number,
     if (selected) {
       // Excel と同じく、選択中の列見出しは薄い緑に塗り、下辺を緑の線で強調する
       ctx.fillStyle = COLORS.headerActiveBg
-      ctx.fillRect(x, 0, cw, HEADER_H)
+      ctx.fillRect(x, 0, cw, p.headerH)
       ctx.fillStyle = COLORS.selectionBorder
-      ctx.fillRect(x, HEADER_H - 2, cw, 2)
+      ctx.fillRect(x, p.headerH - 2, cw, 2)
     }
     ctx.fillStyle = selected ? COLORS.headerActiveText : COLORS.headerText
-    ctx.font = selected ? HEADER_FONT_BOLD : HEADER_FONT
-    ctx.fillText(colToLetter(c), x + cw / 2, HEADER_H / 2)
+    ctx.font = headerFont(p.zoom, selected)
+    ctx.fillText(colToLetter(c), x + cw / 2, p.headerH / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()
     ctx.moveTo(Math.floor(x + cw) + 0.5, 0)
-    ctx.lineTo(Math.floor(x + cw) + 0.5, HEADER_H)
+    ctx.lineTo(Math.floor(x + cw) + 0.5, p.headerH)
     ctx.stroke()
   }
   ctx.restore()
@@ -567,10 +576,10 @@ function paintRowHeader(p: PaintContext, y0: number, h: number, scrollY: number,
 
   ctx.save()
   ctx.beginPath()
-  ctx.rect(0, y0, HEADER_W, h)
+  ctx.rect(0, y0, p.headerW, h)
   ctx.clip()
   ctx.fillStyle = COLORS.headerBg
-  ctx.fillRect(0, y0, HEADER_W, h)
+  ctx.fillRect(0, y0, p.headerW, h)
   ctx.translate(0, y0 - scrollY)
   ctx.textAlign = 'center'
   for (let r = span.first; r <= span.last; r++) {
@@ -579,17 +588,17 @@ function paintRowHeader(p: PaintContext, y0: number, h: number, scrollY: number,
     const selected = r >= sel.r0 && r <= sel.r1
     if (selected) {
       ctx.fillStyle = COLORS.headerActiveBg
-      ctx.fillRect(0, y, HEADER_W, rh)
+      ctx.fillRect(0, y, p.headerW, rh)
       ctx.fillStyle = COLORS.selectionBorder
-      ctx.fillRect(HEADER_W - 2, y, 2, rh)
+      ctx.fillRect(p.headerW - 2, y, 2, rh)
     }
     ctx.fillStyle = selected ? COLORS.headerActiveText : COLORS.headerText
-    ctx.font = selected ? HEADER_FONT_BOLD : HEADER_FONT
-    ctx.fillText(String(r + 1), HEADER_W / 2, y + rh / 2)
+    ctx.font = headerFont(p.zoom, selected)
+    ctx.fillText(String(r + 1), p.headerW / 2, y + rh / 2)
     ctx.strokeStyle = COLORS.headerBorder
     ctx.beginPath()
     ctx.moveTo(0, Math.floor(y + rh) + 0.5)
-    ctx.lineTo(HEADER_W, Math.floor(y + rh) + 0.5)
+    ctx.lineTo(p.headerW, Math.floor(y + rh) + 0.5)
     ctx.stroke()
   }
   ctx.restore()

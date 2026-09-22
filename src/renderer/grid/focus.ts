@@ -1,25 +1,5 @@
+import { isTouchDevice } from '../device'
 import { useStore } from '../store/workbookStore'
-
-let touchDevice: boolean | null = null
-
-/**
- * 主な入力がタッチ（スマホ・タブレット）か。
- * マウスのある PC ではタッチ画面付きでも false になる（pointer: coarse は「主な」入力を見る）。
- */
-export function isTouchDevice(): boolean {
-  if (touchDevice === null) {
-    touchDevice =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(pointer: coarse)').matches
-  }
-  return touchDevice
-}
-
-/** テスト・スモーク用：判定を上書きする */
-export function setTouchDeviceForTest(value: boolean | null): void {
-  touchDevice = value
-}
 
 /**
  * セル入力欄へフォーカスを戻す。
