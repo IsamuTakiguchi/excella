@@ -1,25 +1,52 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { formatCellValue } from '@shared/numberFormat'
-import type { MenuAction, SerializedResults } from '@shared/ipc'
+import type { MenuAction, RecoverySnapshot } from '@shared/ipc'
+import { createAutoPersistence, saveCurrent } from './autosave'
 import { bridge, preloadMissing } from './bridge'
 import { onLocalMenu } from './menuBus'
 import { SheetCanvas } from './grid/SheetCanvas'
 import { useStore } from './store/workbookStore'
 import { FormulaBar } from './ui/FormulaBar'
+import { RecoveryBanner } from './ui/RecoveryBanner'
 import { SheetTabs } from './ui/SheetTabs'
 import { StatusBar } from './ui/StatusBar'
 import { TitleBar } from './ui/TitleBar'
 import { Toolbar } from './ui/Toolbar'
 
 export function App(): React.JSX.Element {
+  const showFormulaBar = useStore((s) => s.showFormulaBar)
   const save = useCallback(async (asNew: boolean) => {
-    const state = useStore.getState()
-    const results: SerializedResults = state.model.sheets.map((sheet) => [
-      sheet.id,
-      [...state.engine.getResultMap(sheet).entries()],
-    ])
-    const result = await bridge.saveWorkbook(asNew ? null : state.filePath, state.model, results)
-    if (result) state.markSaved(result.path, result.name)
+    await saveCurrent(asNew)
+  }, [])
+
+  // 前回、保存されないまま閉じた変更があれば復元を勧める（Excel の「ドキュメントの回復」）
+  const [recovery, setRecovery] = useState<RecoverySnapshot | null>(null)
+  useEffect(() => {
+    let alive = true
+    void bridge.loadRecovery().then((snapshot) => {
+      if (alive) setRecovery(snapshot)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // 自動回復（常に）と自動保存（スイッチがオンのとき）を裏で動かす
+  useEffect(() => {
+    const persistence = createAutoPersistence({
+      api: bridge,
+      store: useStore,
+      save: () => saveCurrent(false, { silent: true }),
+    })
+    // タブを閉じる・アプリを切り替えるときは、待たずに控えを書く
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') void persistence.flush()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      persistence.stop()
+    }
   }, [])
 
   const open = useCallback(async () => {
@@ -198,8 +225,24 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
       <TitleBar />
+      {recovery ? (
+        <RecoveryBanner
+          snapshot={recovery}
+          onRestore={() => {
+            const store = useStore.getState()
+            if (store.dirty && !confirm('いまの変更は破棄されます。復元しますか？')) return
+            store.restoreWorkbook(recovery.model, recovery.filePath, recovery.fileName)
+            setRecovery(null)
+          }}
+          onDiscard={() => {
+            // いま編集中の変更の控えまで消さないよう、未保存の変更が無いときだけ消す
+            if (!useStore.getState().dirty) void bridge.clearRecovery()
+            setRecovery(null)
+          }}
+        />
+      ) : null}
       <Toolbar />
-      <FormulaBar />
+      {showFormulaBar ? <FormulaBar /> : null}
       <SheetCanvas />
       <SheetTabs />
       <StatusBar />

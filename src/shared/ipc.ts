@@ -35,6 +35,18 @@ export type SaveResult = {
  */
 export type SerializedResults = Array<[string, Array<[string, string | number | boolean]>]>
 
+/**
+ * 自動回復の控え。保存していない変更を、アプリが不意に閉じても失わないためのもの。
+ * 1 ブック分だけを固定の場所に置く（デスクトップは userData、ブラウザは IndexedDB）。
+ */
+export type RecoverySnapshot = {
+  model: WorkbookModel
+  fileName: string
+  filePath: string | null
+  /** 控えを書いた時刻（ミリ秒） */
+  savedAt: number
+}
+
 /** preload が contextBridge で公開する API */
 export type ExcellaApi = {
   /** ダイアログでファイルを選ばせて読み込む。キャンセルなら null */
@@ -60,6 +72,22 @@ export type ExcellaApi = {
    * ダイアログ経由ではなく main 側から一方的に届く点が openWorkbook と異なる。
    */
   onOpenFile(handler: (result: OpenResult) => void): () => void
+
+  /** 自動回復の控えを読む。無ければ null */
+  loadRecovery(): Promise<RecoverySnapshot | null>
+  /** 自動回復の控えを書く（前の控えは置き換わる）。書く場所は固定で、呼び出し側は選べない */
+  saveRecovery(snapshot: RecoverySnapshot): Promise<void>
+  clearRecovery(): Promise<void>
+
+  /** この環境がファイルへの自動保存に対応しているか（iOS Safari などは非対応） */
+  supportsAutoSave: boolean
+  /** そのファイルへ黙って上書きできるか（xlsx として開いた・保存したファイルだけ） */
+  canAutoSave(path: string | null): boolean
+  /**
+   * 自動保存を始める前の準備。ブラウザでは書き込みの許可をもらう（ユーザー操作の中で呼ぶ）。
+   * 許可が出なければ false
+   */
+  prepareAutoSave(path: string): Promise<boolean>
 }
 
 export const IPC = {
@@ -69,4 +97,7 @@ export const IPC = {
   setDirty: 'app:set-dirty',
   menu: 'app:menu',
   openedExternally: 'workbook:opened',
+  loadRecovery: 'recovery:load',
+  saveRecovery: 'recovery:save',
+  clearRecovery: 'recovery:clear',
 } as const

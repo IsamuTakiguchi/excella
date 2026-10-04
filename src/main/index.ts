@@ -1,14 +1,21 @@
 import { app, BrowserWindow, shell } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { workbookFromXlsx } from './io/xlsx'
 import { openFileInWindow, registerIpcHandlers, setMainWindow } from './ipc'
 import { buildMenu } from './menu'
+import { recoveryPath } from './recovery'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 /** `--smoke` 付きで起動されたら、ウィンドウを表示して数秒で終了する（CI/ヘッドレス確認用） */
 const SMOKE = process.argv.includes('--smoke')
+
+// スモークテストは使い捨ての userData で動かす。自動回復の控えなどを
+// ふだん使いの環境に残さないため（次の起動で検査用のデータの復元を勧めてしまう）
+if (SMOKE) app.setPath('userData', mkdtempSync(join(tmpdir(), 'excella-smoke-')))
 
 const OPENABLE = /\.(xlsx|csv|tsv)$/i
 
@@ -178,6 +185,11 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
   }
 
   await captureIfRequested(win)
+  // ファイル名や「保存済み」がスクリーンショットに写らないよう、撮ったあとで検査する
+  if (!(await checkAutoSave(win))) {
+    app.exit(1)
+    return
+  }
   console.log('[smoke] 正常に描画できました')
   app.exit(0)
 }
@@ -458,6 +470,66 @@ async function checkPointMode(win: BrowserWindow): Promise<boolean> {
     return true
   } catch (error) {
     console.error('[smoke] 数式の参照選択の検査が例外で落ちました', error)
+    return false
+  }
+}
+
+/**
+ * 自動回復と自動保存を本物の保存経路で確かめる（renderer → preload → main → ファイル）。
+ *
+ * 1. 自動保存がオフのまま編集すると、少し待って回復用の控えが userData に書かれる
+ * 2. 自動保存をオンにすると、少し待って xlsx に上書きされ、控えは消える
+ *
+ * userData はスモーク用の使い捨てのフォルダなので、ふだんの環境は汚さない。
+ */
+async function checkAutoSave(win: BrowserWindow): Promise<boolean> {
+  const wc = win.webContents
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  const userData = app.getPath('userData')
+  const file = join(userData, 'autosave-check.xlsx')
+  const run = (code: string) =>
+    wc.executeJavaScript(`(() => { const s = window.__excellaStore.getState(); ${code} })()`)
+
+  try {
+    // 保存済みのファイルを開いている状態にする（保存ダイアログは出せないので直接）
+    await run(`s.markSaved(${JSON.stringify(file)}, 'autosave-check.xlsx', { silent: true })`)
+    await run(`s.setCellInput({ row: 99, col: 25 }, '自動保存の検査')`)
+
+    await wait(2200)
+    if (!existsSync(recoveryPath(userData))) {
+      console.error('[smoke] 未保存の変更があるのに、自動回復の控えが書かれていません')
+      return false
+    }
+    if (existsSync(file)) {
+      console.error('[smoke] 自動保存がオフなのにファイルに書かれています')
+      return false
+    }
+
+    await run(`s.setAutoSave(true)`)
+    await wait(3500)
+    const state = (await run(`return { dirty: s.dirty, state: s.autoSaveState }`)) as {
+      dirty: boolean
+      state: string
+    }
+    if (!existsSync(file) || state.dirty || state.state !== 'saved') {
+      console.error(`[smoke] 自動保存でファイルに書かれていません: ${JSON.stringify(state)}`)
+      return false
+    }
+    const saved = await workbookFromXlsx(file)
+    if (saved.sheets[0]?.cells['Z100']?.v !== '自動保存の検査') {
+      console.error('[smoke] 自動保存したファイルに、編集した内容が入っていません')
+      return false
+    }
+    if (existsSync(recoveryPath(userData))) {
+      console.error('[smoke] 保存したのに、自動回復の控えが残っています')
+      return false
+    }
+
+    await run(`s.setAutoSave(false)`)
+    console.log('[smoke] 自動回復と自動保存の検査に通りました')
+    return true
+  } catch (error) {
+    console.error('[smoke] 自動保存の検査が例外で落ちました', error)
     return false
   }
 }

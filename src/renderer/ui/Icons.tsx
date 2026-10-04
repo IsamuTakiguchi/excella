@@ -210,3 +210,42 @@ export function LogoIcon(p: IconProps): React.JSX.Element {
     </svg>
   )
 }
+
+export function PasteIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <rect x="3" y="3" width="10" height="11" rx="1" />
+      <path d="M6 3V2h4v1" />
+      <path d="M6 7h4M6 10h4" />
+    </svg>
+  )
+}
+
+export function CutIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <circle cx="4.5" cy="12" r="2" />
+      <circle cx="11.5" cy="12" r="2" />
+      <path d="M6 10.5 12 2M10 10.5 4 2" />
+    </svg>
+  )
+}
+
+export function CopyIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <rect x="5" y="5" width="9" height="9" rx="1" />
+      <path d="M11 5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2" />
+    </svg>
+  )
+}
+
+/** 消しゴム（クリア） */
+export function EraserIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="m9 3 4 4-6 6H4l-2-2 7-8Z" />
+      <path d="M6 6l4 4M7 14h7" />
+    </svg>
+  )
+}

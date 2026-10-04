@@ -84,6 +84,8 @@ export function SheetCanvas(): React.JSX.Element {
   const editing = useStore((s) => s.editing)
   const pointing = useStore((s) => s.pointing)
   const zoom = useStore((s) => s.zoom)
+  const showFormulas = useStore((s) => s.showFormulas)
+  const showGridlines = useStore((s) => s.showGridlines)
   const clipboard = useStore((s) => s.clipboard)
   const model = useStore((s) => s.model)
 
@@ -186,9 +188,16 @@ export function SheetCanvas(): React.JSX.Element {
       active: selection.anchor,
       textAt: (row, col) => {
         if (editing && editing.addr.row === row && editing.addr.col === col) return ''
+        // 数式の表示：数式のセルだけ、結果ではなく数式そのものを出す（Excel と同じ）
+        if (showFormulas) {
+          const input = state.inputText({ row, col })
+          if (input.startsWith('=')) return input
+        }
         return state.displayText({ row, col })
       },
-      isNumeric: (row, col) => typeof state.displayValue({ row, col }) === 'number',
+      isNumeric: (row, col) =>
+        typeof state.displayValue({ row, col }) === 'number' &&
+        !(showFormulas && state.inputText({ row, col }).startsWith('=')),
       styleAt: (row, col) => state.styleAt({ row, col }),
       marquee: clipboard && clipboard.origin.sheetId === sheet.id ? clipboard.origin.range : null,
       merges,
@@ -199,6 +208,7 @@ export function SheetCanvas(): React.JSX.Element {
       headerW: HEADER_W,
       headerH: HEADER_H,
       zoom,
+      gridlines: showGridlines,
     })
   }, [
     revision,
@@ -218,6 +228,8 @@ export function SheetCanvas(): React.JSX.Element {
     dpr,
     HEADER_W,
     HEADER_H,
+    showFormulas,
+    showGridlines,
   ])
 
   // --- アクティブセルを可視域に入れる -----------------------------------
@@ -676,6 +688,13 @@ export function SheetCanvas(): React.JSX.Element {
         break
     }
 
+    // オート SUM（Alt+=）
+    if (e.altKey && !mod && e.key === '=') {
+      store.autoSum('SUM')
+      e.preventDefault()
+      return
+    }
+
     if (mod) {
       const key = e.key.toLowerCase()
       if (key === 'a') {
@@ -685,6 +704,23 @@ export function SheetCanvas(): React.JSX.Element {
       }
       if (key === 'b') {
         store.applyStyle({ bold: true }, true)
+        e.preventDefault()
+        return
+      }
+      // 今日の日付 (Ctrl+;) と現在の時刻 (Ctrl+: ／ Ctrl+Shift+;)
+      if (e.key === ';' && !e.shiftKey) {
+        store.insertNow('date')
+        e.preventDefault()
+        return
+      }
+      if (e.key === ':' || (e.key === ';' && e.shiftKey)) {
+        store.insertNow('time')
+        e.preventDefault()
+        return
+      }
+      // 数式の表示（日本語配列では Ctrl+Shift+@、英語配列では Ctrl+`）
+      if (e.key === '`') {
+        store.toggleShowFormulas()
         e.preventDefault()
         return
       }

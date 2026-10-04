@@ -38,7 +38,13 @@ import {
   type WorkbookModel,
 } from '@shared/model'
 import { applyPreset, positionIn, type BorderPreset } from '@shared/borders'
-import { formatCellValue } from '@shared/numberFormat'
+import { formatCellValue, isDateFormat, timeSerial, todaySerial } from '@shared/numberFormat'
+import {
+  autoSumTargets,
+  detectAutoSumRange,
+  uniqueRowIndices,
+  type AutoFunction,
+} from '@shared/dataTools'
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
 import { canInsertRef } from '@shared/formulaRefs'
@@ -102,6 +108,23 @@ type State = {
   /** 数式の参照選択中だけ非 null（編集中のみ） */
   pointing: Pointing
   /**
+   * 自動保存（Excel のタイトル帯のスイッチ）。既定はオフで、ファイルを開き直すとオフに戻る。
+   * Excella は xlsx のグラフなどを保持できないので、知らないうちに上書きしないため
+   */
+  autoSave: boolean
+  autoSaveState: 'idle' | 'saving' | 'saved' | 'error'
+  /**
+   * 開いているファイルの出どころ。'opened' は外から開いた xlsx などで、
+   * 自動保存をオンにするとき「非対応の要素が消える」ことを確かめる
+   */
+  fileOrigin: 'new' | 'opened' | 'saved'
+  /** 数式の表示（Excel の「数式の表示」、Ctrl+Shift+@）。セルに結果ではなく数式を出す */
+  showFormulas: boolean
+  /** 目盛線（セルの境目の薄い線）を出すか。罫線は消えない */
+  showGridlines: boolean
+  /** 数式バーを出すか */
+  showFormulaBar: boolean
+  /**
    * 画面の表示倍率。モデルには入れない（ファイルではなく見え方の設定）。
    * 行高・列幅の値はそのままで、描画とヒットテストだけが倍率ぶん伸びる。
    */
@@ -147,6 +170,20 @@ type Actions = {
 
   /** 表示倍率を変える（範囲外は丸める） */
   setZoom(zoom: number): void
+  toggleShowFormulas(): void
+  toggleGridlines(): void
+  toggleFormulaBar(): void
+
+  /**
+   * オート SUM（と平均・個数・最大・最小）。
+   * セルを 1 つ選んでいれば上（無ければ左）の数値の範囲を推定し、参照選択の状態で
+   * 編集を始める（範囲を矢印やマウスで直せる）。範囲を選んでいれば下（または右）へ入れる。
+   */
+  autoSum(fn: AutoFunction): void
+  /** アクティブセルに今日の日付／現在の時刻を値として入れる（Ctrl+; / Ctrl+:） */
+  insertNow(kind: 'date' | 'time'): void
+  /** 選択範囲から重複する行を取り除く。skipHeader なら先頭行は比べない */
+  removeDuplicates(skipHeader: boolean): void
 
   setCellInput(addr: Addr, text: string): void
   clearSelection(): void
@@ -204,7 +241,16 @@ type Actions = {
 
   newWorkbook(): void
   loadWorkbook(model: WorkbookModel, path: string | null, name: string): void
-  markSaved(path: string, name: string): void
+  /**
+   * 保存できたことを記録する。model には「保存したときのモデル」を渡す。
+   * 保存中に編集が入っていれば未保存のまま残す（その変更はまだファイルに無いため）。
+   * silent なら「保存しました」をステータスバーに出さない（自動保存用）
+   */
+  markSaved(path: string, name: string, options?: { silent?: boolean; model?: WorkbookModel }): void
+  /** 自動回復の控えから戻す。中身は保存されていないので未保存のまま開く */
+  restoreWorkbook(model: WorkbookModel, path: string | null, name: string): void
+  setAutoSave(on: boolean): void
+  setAutoSaveState(state: State['autoSaveState']): void
   setStatus(message: string): void
 }
 
@@ -426,6 +472,12 @@ export const useStore = create<Store>((set, get) => {
     editing: null,
     pointing: null,
     zoom: defaultZoom(),
+    showFormulas: false,
+    showGridlines: true,
+    showFormulaBar: true,
+    autoSave: false,
+    autoSaveState: 'idle',
+    fileOrigin: 'new',
     clipboard: null,
     filePath: null,
     fileName: '新しいブック',
@@ -564,6 +616,120 @@ export const useStore = create<Store>((set, get) => {
     cancelEdit: () => set({ editing: null, pointing: null }),
 
     setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+    toggleShowFormulas: () => set({ showFormulas: !get().showFormulas }),
+    toggleGridlines: () => set({ showGridlines: !get().showGridlines }),
+    toggleFormulaBar: () => set({ showFormulaBar: !get().showFormulaBar }),
+
+    autoSum: (fn) => {
+      if (get().editing) get().commitEdit()
+      const state = get()
+      const range = state.selectionRange()
+      const targets = autoSumTargets(range)
+      if (targets.length > 0) {
+        // 範囲を選んでいるとき：各列の下（または右）へ入れて確定。1 回の元に戻すで戻る
+        mutate((model, engine) => {
+          const sheet = findSheet(model, model.activeSheetId)
+          for (const { target, source } of targets) {
+            const text = `=${fn}(${rangeToA1(source)})`
+            sheet.cells[addrToA1(target)] = { f: text }
+            engine.setContent(model.activeSheetId, target, text)
+            growSheet(sheet, target.row, target.col)
+          }
+        })
+        return
+      }
+      // セルを 1 つ選んでいるとき：範囲を推定して、直せる状態で編集を始める
+      const addr = state.selection.anchor
+      const found = detectAutoSumRange(
+        addr,
+        (row, col) => typeof state.displayValue({ row, col }) === 'number',
+      )
+      const head = `=${fn}(`
+      state.beginEdit(addr, `${head})`)
+      if (found) {
+        get().startPointing({ row: found.r0, col: found.c0 }, head.length)
+        get().setPointing({ row: found.r0, col: found.c0 }, { row: found.r1, col: found.c1 })
+      }
+    },
+
+    insertNow: (kind) => {
+      const state = get()
+      if (state.editing) return
+      const addr = state.selection.anchor
+      const serial = kind === 'date' ? todaySerial() : timeSerial()
+      mutate((model, engine) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        const key = addrToA1(addr)
+        sheet.cells[key] = { v: serial }
+        engine.setContent(model.activeSheetId, addr, serial)
+        // 表示形式が日付・時刻でなければ、それらしい形式にする（Excel と同じ）
+        const style = sheet.styles[key] ?? {}
+        if (!isDateFormat(style.numFmt)) {
+          sheet.styles[key] = { ...style, numFmt: kind === 'date' ? 'yyyy/mm/dd' : 'h:mm' }
+        }
+      })
+    },
+
+    removeDuplicates: (skipHeader) => {
+      if (get().editing) get().commitEdit()
+      const state = get()
+      const range = state.selectionRange()
+      const start = skipHeader && range.r1 > range.r0 ? range.r0 + 1 : range.r0
+      const body: Range = { ...range, r0: start }
+      const sheetId = state.model.activeSheetId
+      const inputs = state.engine.getRangeSerialized(sheetId, body)
+      const keys = inputs.map((row) =>
+        Array.from({ length: rangeCols(body) }, (_, c) => String(row?.[c] ?? '')).join('\u0000'),
+      )
+      const keep = uniqueRowIndices(keys)
+      const removed = keys.length - keep.length
+      if (removed === 0) {
+        set({ statusMessage: '重複する値は見つかりませんでした' })
+        return
+      }
+
+      mutate((model, engine) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        const styles: Array<Array<CellStyle | undefined>> = []
+        for (let r = body.r0; r <= body.r1; r++) {
+          const row: Array<CellStyle | undefined> = []
+          for (let c = body.c0; c <= body.c1; c++)
+            row.push(sheet.styles[addrToA1({ row: r, col: c })])
+          styles.push(row)
+        }
+
+        // 残す行を上へ詰め、余った下の行は空にする（書式も一緒に動かす）
+        const block: Array<Array<string | number | boolean | null>> = []
+        for (let i = 0; i < keys.length; i++) {
+          const from = keep[i]
+          const out: Array<string | number | boolean | null> = []
+          for (let c = 0; c < rangeCols(body); c++) {
+            const key = addrToA1({ row: body.r0 + i, col: body.c0 + c })
+            if (from === undefined) {
+              out.push(null)
+              delete sheet.styles[key]
+              continue
+            }
+            const raw = inputs[from]?.[c]
+            out.push(
+              typeof raw === 'string' && raw.startsWith('=')
+                ? adjustFormula(raw, i - from, 0)
+                : ((raw ?? null) as string | number | boolean | null),
+            )
+            const style = styles[from]?.[c]
+            if (style) sheet.styles[key] = structuredClone(style)
+            else delete sheet.styles[key]
+          }
+          block.push(out)
+        }
+        engine.setBlock(model.activeSheetId, { row: body.r0, col: body.c0 }, block)
+        syncCellsFromEngine(sheet, engine)
+      })
+      // Excel と同じ言い回し
+      set({
+        statusMessage: `${removed} 個の重複する値が見つかり、削除されました。${keep.length} 個の一意の値が残っています。`,
+      })
+    },
 
     startPointing: (addr, caret) => {
       const editing = get().editing
@@ -1380,6 +1546,9 @@ export const useStore = create<Store>((set, get) => {
         canUndo: false,
         canRedo: false,
         statusMessage: '',
+        autoSave: false,
+        autoSaveState: 'idle',
+        fileOrigin: 'new',
       })
       bridge.setDirty(false)
     },
@@ -1401,14 +1570,52 @@ export const useStore = create<Store>((set, get) => {
         canUndo: false,
         canRedo: false,
         statusMessage: `${name} を開きました`,
+        autoSave: false,
+        autoSaveState: 'idle',
+        fileOrigin: 'opened',
       })
       bridge.setDirty(false)
     },
 
-    markSaved: (path, name) => {
-      savedModel = cloneModel(get().model)
-      set({ filePath: path, fileName: name, dirty: false, statusMessage: `${name} に保存しました` })
-      bridge.setDirty(false)
+    restoreWorkbook: (model, path, name) => {
+      get().engine.rebuild(model)
+      // 保存した時点が無いので、undo で戻っても「保存済み」にはならない
+      savedModel = null
+      undoStack.length = 0
+      redoStack.length = 0
+      set({
+        model,
+        revision: get().revision + 1,
+        selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
+        editing: null,
+        pointing: null,
+        filePath: path,
+        fileName: name,
+        dirty: true,
+        canUndo: false,
+        canRedo: false,
+        statusMessage: '保存されていなかった変更を復元しました',
+        autoSave: false,
+        autoSaveState: 'idle',
+        fileOrigin: path ? 'opened' : 'new',
+      })
+      bridge.setDirty(true)
+    },
+
+    setAutoSave: (on) => set({ autoSave: on, autoSaveState: 'idle' }),
+    setAutoSaveState: (autoSaveState) => set({ autoSaveState }),
+
+    markSaved: (path, name, options = {}) => {
+      savedModel = cloneModel(options.model ?? get().model)
+      const clean = isSameAsSaved(get().model)
+      set({
+        filePath: path,
+        fileName: name,
+        dirty: !clean,
+        fileOrigin: 'saved',
+        ...(options.silent ? {} : { statusMessage: `${name} に保存しました` }),
+      })
+      bridge.setDirty(!clean)
     },
 
     setStatus: (message) => set({ statusMessage: message }),

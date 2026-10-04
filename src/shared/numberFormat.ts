@@ -78,6 +78,20 @@ export function dateToSerial(date: Date): number {
   return (date.getTime() - EPOCH_UTC) / MS_PER_DAY
 }
 
+/**
+ * 端末の地域での「今日」をシリアル値に（時刻は 0:00）。
+ * シリアル値は UTC の壁時計として表示しているので、現地の年月日をそのまま UTC に置く。
+ * そうしないと日本時間の朝 9 時前に「昨日」が入ってしまう。
+ */
+export function todaySerial(now: Date = new Date()): number {
+  return dateToSerial(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())))
+}
+
+/** 端末の地域での現在時刻を、1 日の端数のシリアル値に */
+export function timeSerial(now: Date = new Date()): number {
+  return (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) / 86400
+}
+
 function formatDate(serial: number, code: string): string {
   const d = serialToDate(serial)
   const y = d.getUTCFullYear()

@@ -51,6 +51,8 @@ export type PaintContext = {
   headerH: number
   /** 表示倍率。文字の大きさに使う */
   zoom: number
+  /** 目盛線を描くか（省略時は描く） */
+  gridlines?: boolean
 }
 
 /**
@@ -291,21 +293,23 @@ function paintPane(p: PaintContext, pane: Pane): void {
     ctx.fillRect(selX, selY, selW, selH)
   }
 
-  // 罫線
-  ctx.strokeStyle = COLORS.gridLine
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  for (let c = colRange.first; c <= colRange.last + 1 && c <= p.colCount; c++) {
-    const x = Math.floor(offsetOf(p.cols, c)) + 0.5
-    ctx.moveTo(x, offsetOf(p.rows, rowRange.first))
-    ctx.lineTo(x, offsetOf(p.rows, Math.min(rowRange.last + 1, p.rowCount)))
+  // 目盛線（セルの境目の薄い線）。Excel の「表示 > 目盛線」で消せる。罫線は消えない
+  if (p.gridlines !== false) {
+    ctx.strokeStyle = COLORS.gridLine
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (let c = colRange.first; c <= colRange.last + 1 && c <= p.colCount; c++) {
+      const x = Math.floor(offsetOf(p.cols, c)) + 0.5
+      ctx.moveTo(x, offsetOf(p.rows, rowRange.first))
+      ctx.lineTo(x, offsetOf(p.rows, Math.min(rowRange.last + 1, p.rowCount)))
+    }
+    for (let r = rowRange.first; r <= rowRange.last + 1 && r <= p.rowCount; r++) {
+      const y = Math.floor(offsetOf(p.rows, r)) + 0.5
+      ctx.moveTo(offsetOf(p.cols, colRange.first), y)
+      ctx.lineTo(offsetOf(p.cols, Math.min(colRange.last + 1, p.colCount)), y)
+    }
+    ctx.stroke()
   }
-  for (let r = rowRange.first; r <= rowRange.last + 1 && r <= p.rowCount; r++) {
-    const y = Math.floor(offsetOf(p.rows, r)) + 0.5
-    ctx.moveTo(offsetOf(p.cols, colRange.first), y)
-    ctx.lineTo(offsetOf(p.cols, Math.min(colRange.last + 1, p.colCount)), y)
-  }
-  ctx.stroke()
 
   // 結合範囲の内側の罫線を消す
   if (p.merges) {

@@ -64,20 +64,61 @@ body,
   user-select: none;
 }
 
-.file-menu-button {
-  height: 22px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
+/* 自動保存のスイッチ（Excel のタイトル帯と同じ位置・形） */
+.autosave-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
   color: #fff;
   font: inherit;
   cursor: pointer;
 }
 
-.file-menu-button:hover,
-.file-menu-button[aria-expanded='true'] {
-  background: rgba(255, 255, 255, 0.28);
+.autosave-switch:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.autosave-switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.autosave-track {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border: 1.5px solid #fff;
+  border-radius: 9px;
+}
+
+.autosave-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+
+.autosave-switch.on .autosave-track {
+  background: #fff;
+}
+
+.autosave-switch.on .autosave-knob {
+  background: var(--green);
+  transform: translateX(14px);
+}
+
+.title-bar .save-status {
+  color: #d7ead9;
+  white-space: nowrap;
 }
 
 .title-bar .logo {
@@ -100,12 +141,60 @@ body,
 /* ---------- リボン（ツールバー） ---------- */
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 0;
-  padding: 4px 6px 0;
+  flex-direction: column;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+}
+
+/* リボンのタブ（ファイル／ホーム／挿入／数式／データ／表示）。Excel と同じ並び */
+.toolbar .ribbon-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px 6px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar .ribbon-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar .ribbon-tabs button {
+  flex: none;
+  height: 28px;
+  min-width: 0;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 3px 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.toolbar .ribbon-tabs button.active {
+  border-bottom-color: var(--green);
+  color: var(--green);
+  font-weight: 700;
+}
+
+/* 「ファイル」は Excel と同じく緑で塗り、押すと全画面の Backstage を開く */
+.toolbar .ribbon-tabs button.file-tab {
+  margin-right: 4px;
+  background: var(--green);
+  color: #fff;
+}
+
+.toolbar .ribbon-tabs button.file-tab:hover {
+  background: var(--green-dark);
+}
+
+.ribbon-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  padding: 4px 6px 0;
 }
 
 .toolbar .group {
@@ -246,61 +335,23 @@ body,
   cursor: pointer;
 }
 
-/* リボンのタブ（狭い画面）。横スクロールで機能を探させないための切り替え */
-.toolbar.compact {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 0;
-  padding: 0;
-}
-
-.toolbar.compact .ribbon-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 3px 6px 0;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.toolbar.compact .ribbon-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.toolbar.compact .ribbon-tabs button {
-  height: 28px;
-  min-width: 0;
-  padding: 0 12px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 3px 3px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.toolbar.compact .ribbon-tabs button.active {
-  border-bottom-color: var(--green);
-  color: var(--green);
-  font-weight: 700;
-}
-
+/* 狭い画面：グループ名を出さずに詰め、入りきらなければ折り返す（横スクロールで探させない） */
 .toolbar.compact .items {
+  flex-wrap: wrap;
   gap: 2px;
   padding: 3px 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.toolbar.compact .items::-webkit-scrollbar {
-  display: none;
 }
 
 .toolbar.compact .section {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+
+/* 文字のボタン（オート SUM・重複の削除など、アイコンでは伝わりにくいもの） */
+.toolbar button.text-button {
+  padding: 0 8px;
+  white-space: nowrap;
 }
 
 /* 色のパレット（狭い画面では押すと開く） */
@@ -323,14 +374,18 @@ body,
 .palette-popover {
   position: fixed;
   z-index: 20;
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 6px;
+  display: block;
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 4px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 6px;
 }
 
 .palette-popover .swatch {
@@ -339,6 +394,37 @@ body,
   height: 26px;
   border: 1px solid var(--border-strong);
   border-radius: 3px;
+}
+
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+
+.toolbar .menu-list button {
+  justify-content: flex-start;
+  height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.border-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.border-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 4px;
+}
+
+.border-options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---------- 数式バー ---------- */
@@ -706,6 +792,200 @@ body,
   cursor: default;
 }
 
+/* ---------- 自動回復の帯 ---------- */
+.recovery-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 6px 12px;
+  background: #fff4ce;
+  border-bottom: 1px solid #e8d48c;
+  color: #3d3200;
+}
+
+.recovery-text {
+  flex: 1 1 260px;
+}
+
+.recovery-text strong {
+  margin-right: 6px;
+}
+
+.recovery-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.recovery-actions button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid #c9b25a;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.recovery-actions button.primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+
+/* ---------- Backstage（「ファイル」タブの全画面） ---------- */
+.backstage {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  background: var(--panel);
+}
+
+.backstage-nav {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 200px;
+  padding: env(safe-area-inset-top) 0 12px;
+  background: var(--green);
+}
+
+.backstage-nav button {
+  height: 40px;
+  padding: 0 24px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.backstage-nav button:hover,
+.backstage-nav button.active {
+  background: var(--green-dark);
+}
+
+.backstage-nav .backstage-back {
+  height: 48px;
+  font-size: 20px;
+}
+
+.backstage-nav hr {
+  width: calc(100% - 48px);
+  margin: 8px 24px;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.backstage-main {
+  flex: 1;
+  min-width: 0;
+  padding: calc(24px + env(safe-area-inset-top)) 40px 24px;
+  overflow-y: auto;
+}
+
+.backstage-main h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  font-weight: 400;
+}
+
+.backstage-file {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.backstage-props {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 24px;
+  margin: 0 0 28px;
+}
+
+.backstage-props dt {
+  color: var(--muted);
+}
+
+.backstage-props dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.backstage-card {
+  max-width: 560px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.backstage-card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.backstage-card p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* Backstage の中のスイッチは白地なので、緑の配色に */
+.backstage-card .autosave-switch {
+  padding: 0;
+  color: var(--text);
+}
+
+.backstage-card .autosave-switch:hover:not(:disabled) {
+  background: transparent;
+}
+
+.backstage-card .autosave-track {
+  border-color: var(--green);
+}
+
+.backstage-card .autosave-knob {
+  background: var(--green);
+}
+
+.backstage-card .autosave-switch.on .autosave-track {
+  background: var(--green);
+}
+
+.backstage-card .autosave-switch.on .autosave-knob {
+  background: #fff;
+}
+
+@media (max-width: 720px) {
+  .backstage {
+    flex-direction: column;
+  }
+
+  .backstage-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: auto;
+    padding: env(safe-area-inset-top) 4px 4px;
+  }
+
+  .backstage-nav button {
+    height: 36px;
+    padding: 0 12px;
+  }
+
+  .backstage-nav hr {
+    display: none;
+  }
+
+  .backstage-main {
+    padding: 16px;
+  }
+}
+
 /* ---------- ステータスバー ---------- */
 .status-bar {
   display: flex;
@@ -833,6 +1113,15 @@ body,
     display: none;
   }
 
+  .title-bar .autosave-switch {
+    gap: 4px;
+    padding: 0 4px;
+  }
+
+  .title-bar .autosave-state {
+    display: none;
+  }
+
   .title-bar .file {
     overflow: hidden;
     white-space: nowrap;
@@ -955,11 +1244,6 @@ body,
 
   .toolbar.compact select {
     max-width: 150px;
-  }
-
-  .file-menu-button {
-    height: 26px;
-    padding: 0 12px;
   }
 
   /*

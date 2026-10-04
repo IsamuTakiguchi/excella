@@ -1,4 +1,4 @@
-import type { ExcellaApi, OpenResult, SaveResult } from '@shared/ipc'
+import type { ExcellaApi, OpenResult, RecoverySnapshot, SaveResult } from '@shared/ipc'
 import { csvToWorkbook, sheetToRows, stringifyCsv } from '@shared/csv'
 import type { WorkbookModel } from '@shared/model'
 
@@ -145,6 +145,53 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const XLSX_TYPE: PickerType = { description: 'Excel ブック', accept: { [XLSX_MIME]: ['.xlsx'] } }
 const CSV_TYPE: PickerType = { description: 'CSV', accept: { 'text/csv': ['.csv'] } }
 
+// --- 自動回復の控え（IndexedDB） ------------------------------------------------
+// localStorage は 5 MB 前後で溢れるので、大きめのブックも入る IndexedDB に置く。
+// プライベートブラウズなどで使えないときは黙って何もしない（編集の邪魔をしない）
+
+const DB_NAME = 'excella'
+const DB_STORE = 'recovery'
+const DB_KEY = 'workbook'
+
+function openDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T | undefined> {
+  try {
+    const db = await openDb()
+    return await new Promise<T>((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, mode)
+      const request = run(tx.objectStore(DB_STORE))
+      tx.oncomplete = () => {
+        db.close()
+        resolve(request.result)
+      }
+      tx.onerror = () => {
+        db.close()
+        reject(tx.error)
+      }
+    })
+  } catch {
+    return undefined
+  }
+}
+
+// --- 自動保存（File System Access API のハンドルへ上書き） ------------------------
+
+type PermissionedHandle = FileSystemFileHandle & {
+  queryPermission?: (d: { mode: 'readwrite' }) => Promise<PermissionState>
+  requestPermission?: (d: { mode: 'readwrite' }) => Promise<PermissionState>
+}
+
 let dirty = false
 
 export function createWebBridge(): ExcellaApi {
@@ -210,6 +257,41 @@ export function createWebBridge(): ExcellaApi {
 
     // ネイティブメニューは無い。画面上のメニューは menuBus を通る
     onMenu: () => () => {},
+
+    async loadRecovery() {
+      const value = await withStore('readonly', (store) => store.get(DB_KEY))
+      const snapshot = value as RecoverySnapshot | undefined
+      return Array.isArray(snapshot?.model?.sheets) ? snapshot : null
+    },
+
+    async saveRecovery(snapshot) {
+      await withStore('readwrite', (store) => store.put(snapshot, DB_KEY))
+    },
+
+    async clearRecovery() {
+      await withStore('readwrite', (store) => store.delete(DB_KEY))
+    },
+
+    // 保存ダイアログが使えるブラウザ（Chrome / Edge / Android Chrome）だけ。
+    // iOS Safari などはダウンロードでしか保存できないので、ファイルへの自動保存はできない
+    supportsAutoSave: typeof w().showSaveFilePicker === 'function',
+
+    canAutoSave(path) {
+      const handle = path ? handles.get(path) : undefined
+      return Boolean(handle && /\.xlsx$/i.test(handle.name))
+    },
+
+    async prepareAutoSave(path) {
+      const handle = handles.get(path) as PermissionedHandle | undefined
+      if (!handle) return false
+      // 「開く」で選んだファイルは読み取りの許可しか無いので、ここで書き込みの許可をもらう
+      if ((await handle.queryPermission?.({ mode: 'readwrite' })) === 'granted') return true
+      try {
+        return (await handle.requestPermission?.({ mode: 'readwrite' })) === 'granted'
+      } catch {
+        return false
+      }
+    },
 
     onOpenFile(handler) {
       // PWA の「ファイルを開くアプリ」として起動された場合（manifest の file_handlers）

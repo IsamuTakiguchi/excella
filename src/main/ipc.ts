@@ -1,10 +1,12 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { rmSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
-import { IPC, type OpenResult, type SaveResult } from '../shared/ipc'
+import { IPC, type OpenResult, type RecoverySnapshot, type SaveResult } from '../shared/ipc'
 import { csvToWorkbook, sheetToRows, stringifyCsv } from '../shared/csv'
 import type { WorkbookModel } from '../shared/model'
 import { workbookFromXlsx, xlsxFromWorkbook } from './io/xlsx'
+import { clearRecovery, readRecovery, recoveryPath, writeRecovery } from './recovery'
 
 /** Excel が CSV を UTF-8 と判定するために先頭へ付ける BOM */
 const UTF8_BOM = String.fromCharCode(0xfeff)
@@ -24,7 +26,12 @@ export function setMainWindow(win: BrowserWindow): void {
       message: '保存していない変更があります',
       detail: '閉じると変更内容は失われます。',
     })
-    if (choice === 1) event.preventDefault()
+    if (choice === 1) {
+      event.preventDefault()
+      return
+    }
+    // 「保存せずに閉じる」を選んだ変更は、次に開いたとき復元を勧めない
+    rmSync(recoveryPath(app.getPath('userData')), { force: true })
   })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
@@ -134,6 +141,14 @@ export function registerIpcHandlers(): void {
       return { path: result.filePath, name: basename(result.filePath) }
     },
   )
+
+  // 自動回復の控え。場所は userData の下に固定（renderer からは選べない）
+  ipcMain.handle(IPC.loadRecovery, () => readRecovery(app.getPath('userData')))
+  ipcMain.handle(IPC.saveRecovery, async (_event, snapshot: RecoverySnapshot) => {
+    if (!Array.isArray(snapshot?.model?.sheets)) return
+    await writeRecovery(app.getPath('userData'), snapshot)
+  })
+  ipcMain.handle(IPC.clearRecovery, () => clearRecovery(app.getPath('userData')))
 
   ipcMain.on(IPC.setDirty, (_event, value: boolean) => {
     dirty = value

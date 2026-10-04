@@ -17,6 +17,12 @@ const noop: ExcellaApi = {
   setDirty: () => {},
   onMenu: () => () => {},
   onOpenFile: () => () => {},
+  loadRecovery: async () => null,
+  saveRecovery: async () => {},
+  clearRecovery: async () => {},
+  supportsAutoSave: false,
+  canAutoSave: () => false,
+  prepareAutoSave: async () => false,
 }
 
 const hasWindow = typeof window !== 'undefined'

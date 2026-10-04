@@ -18,6 +18,13 @@ const api: ExcellaApi = {
     ipcRenderer.on(IPC.openedExternally, listener)
     return () => ipcRenderer.removeListener(IPC.openedExternally, listener)
   },
+  loadRecovery: () => ipcRenderer.invoke(IPC.loadRecovery),
+  saveRecovery: (snapshot) => ipcRenderer.invoke(IPC.saveRecovery, snapshot),
+  clearRecovery: () => ipcRenderer.invoke(IPC.clearRecovery),
+  // デスクトップ版は xlsx として開いた・保存したファイルならいつでも上書きできる
+  supportsAutoSave: true,
+  canAutoSave: (path) => typeof path === 'string' && /\.xlsx$/i.test(path),
+  prepareAutoSave: async () => true,
 }
 
 contextBridge.exposeInMainWorld('excella', api)

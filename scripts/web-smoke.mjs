@@ -10,7 +10,8 @@
  *   - セルをタップすると選択され、もう一度タップすると編集が始まる
  *   - 文字を打って Enter で確定し、キーボードが閉じる
  *   - 長押しでメニューが出る
- *   - 「ファイル」メニューが開く
+ *   - リボンが Excel と同じタブ式で、「ファイル」で Backstage が開く
+ *   - 保存しないまま開き直すと、自動回復の控えから復元できる
  *   - Service Worker と manifest（ホーム画面に追加できる条件）
  *
  * Chromium の場所は CHROMIUM_PATH で上書きできる（無ければ Playwright の既定）。
@@ -109,7 +110,8 @@ async function main() {
       }
     })
     if (!layout.compact) fail('狭い画面なのにリボンがタブ式になっていない')
-    if (layout.tabs < 4) fail(`リボンのタブが足りない (${layout.tabs})`)
+    // ファイル／ホーム／挿入／数式／データ／表示（Excel と同じ並び）
+    if (layout.tabs < 6) fail(`リボンのタブが足りない (${layout.tabs})`)
     if (layout.pageOverflow > 0) fail(`ページが横にはみ出している (${layout.pageOverflow}px)`)
     if (layout.itemsOverflow > 24) {
       fail(`リボンの中身が画面に収まっていない (${layout.itemsOverflow}px)`)
@@ -260,23 +262,27 @@ async function main() {
     if (await page.isVisible('.context-menu')) fail('Escape でメニューが閉じない')
     console.log('[web-smoke] 長押しメニューの検査に通りました')
 
-    // ファイルメニュー
-    await page.tap('.file-menu-button')
+    // 「ファイル」タブで Excel の Backstage が開き、Esc で戻れる
+    await page.tap('.file-tab')
     await page.waitForTimeout(150)
-    const menuText = await page.textContent('.context-menu')
-    if (!menuText || !menuText.includes('開く')) fail('ファイルメニューが開かない')
+    const backstageText = await page.textContent('.backstage')
+    if (!backstageText || !backstageText.includes('開く') || !backstageText.includes('自動保存')) {
+      fail('「ファイル」で Backstage が開かない')
+    }
     await page.keyboard.press('Escape')
-    console.log('[web-smoke] ファイルメニューの検査に通りました')
+    await page.waitForTimeout(150)
+    if (await page.isVisible('.backstage')) fail('Esc で Backstage が閉じない')
+    console.log('[web-smoke] 「ファイル」タブ（Backstage）の検査に通りました')
 
     // リボンのタブを切り替えると、その組のボタンが出る
-    await page.tap('.ribbon-tabs button:nth-child(3)') // 罫線
+    await page.tap('.ribbon-tabs button:has-text("数式")')
     await page.waitForTimeout(150)
-    const borderButtons = await page.evaluate(
-      () => document.querySelectorAll('.toolbar .items button').length,
-    )
-    if (borderButtons < 8) fail(`罫線タブのボタンが出ない (${borderButtons})`)
-    await page.tap('.ribbon-tabs button:nth-child(1)') // ホームへ戻す
+    if (!(await page.isVisible('button:has-text("オート SUM")'))) {
+      fail('数式タブにオート SUM が出ない')
+    }
+    await page.tap('.ribbon-tabs button:has-text("ホーム")')
     await page.waitForTimeout(150)
+    if (!(await page.isVisible('button[title^="太字"]'))) fail('ホームタブに戻れない')
     console.log('[web-smoke] リボンのタブ切り替えの検査に通りました')
 
     // 表示倍率。タッチ端末は指で押せるよう既定から大きく始まる
@@ -310,6 +316,25 @@ async function main() {
       await page.screenshot({ path: screenshotPath })
       console.log(`[web-smoke] スクリーンショットを保存しました: ${screenshotPath}`)
     }
+
+    // 自動回復：保存しないまま閉じても、開き直すと復元を勧められ、中身が戻る
+    await page.waitForTimeout(2000) // 控えを書くまでの待ち（1.5 秒）を越える
+    page.on('dialog', (dialog) => dialog.accept()) // 「ページを離れますか？」に答える
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForFunction(() => Boolean(window.__excellaStore), null, { timeout: 15_000 })
+    await page.waitForSelector('.recovery-banner', { timeout: 5000 }).catch(() => {
+      fail('開き直しても、保存していない変更の復元を勧められない')
+    })
+    await page.tap('.recovery-banner button.primary')
+    await page.waitForTimeout(200)
+    const restored = await page.evaluate(() => {
+      const s = window.__excellaStore.getState()
+      return { a1: s.displayText({ row: 0, col: 0 }), dirty: s.dirty }
+    })
+    if (restored.a1 !== '商品') fail(`復元した中身が違う: ${JSON.stringify(restored)}`)
+    if (!restored.dirty) fail('復元した中身が保存済みになっている（未保存のまま開くはず）')
+    if (await page.isVisible('.recovery-banner')) fail('復元しても帯が消えない')
+    console.log('[web-smoke] 自動回復（開き直して復元）の検査に通りました')
 
     if (errors.length > 0) fail(`ページでエラーが出ています:\n${errors.join('\n')}`)
     console.log('[web-smoke] 正常に動作しました')

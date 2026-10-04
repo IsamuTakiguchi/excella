@@ -54,7 +54,8 @@ src/
 1. **ファイル I/O は main プロセスだけ**。renderer に fs を露出させないため、
    `contextIsolation: true` / `nodeIntegration: false` / `sandbox: true` を維持する。
    preload が公開するのはダイアログ経由の読み書きなど数個の操作だけで、
-   任意パスへの read/write API は作らない。
+   任意パスへの read/write API は作らない。自動回復の控えも main が決めた 1 ファイル
+   （`userData/recovery/workbook.json`、`main/recovery.ts`）だけを読み書きし、パスは renderer から受け取らない。
 2. **preload は CommonJS 出力**（`electron.vite.config.ts` で `format: 'cjs'`）。
    `sandbox: true` の preload は ESM を読めず、ESM にすると**画面が真っ白になる**。
 3. **計算は HyperFormula、書式と寸法はモデル**という役割分担。
@@ -85,13 +86,24 @@ src/
     `scale` と `headerSize(zoom)` が画面上の大きさだけを変える。列幅の自動調整は
     倍率 1 で計測する（倍率を混ぜると、拡大するたびに列が太っていく）。
 11. **画面の広さで「出し分け」ではなく「作りを変える」ところは JS 側でも境目を見る**。
-    リボンのタブ化は CSS では書けないので `useMediaQuery(COMPACT_RIBBON)` で切り替え、
+    リボンのグループ枠の有無や色パレットのポップオーバー化は CSS では書けないので
+    `useMediaQuery(COMPACT_RIBBON)` で切り替え、
     見た目の調整だけを CSS のメディアクエリでやる。境目の値は `device.ts` に 1 つだけ置く。
 12. **横スクロールする要素の中にポップオーバーを置かない**。リボンは横スクロールするので、
     色パレットは `position: fixed` で画面に対して出す（中に置くと切り取られて見えない）。
 13. **renderer は Electron 専用 API を直接呼ばない**。ファイル入出力は `bridge` 経由にし、
     xlsx の変換は `shared/xlsx.ts`（バイト列 ⇄ モデル）に置く。ExcelJS は約 1 MB あるので
     ブラウザ版では動的 import で遅延読み込みする。
+14. **リボンは Excel と同じタブ構成**（ファイル／ホーム／挿入／数式／データ／表示）。
+    「ファイル」は Backstage（`Backstage.tsx`）で、`createPortal` で body 直下に出す。
+    ツールバーの中に置くと `.toolbar button` の見た目が漏れてくる。
+15. **自動回復は常に、自動保存はスイッチがオンのときだけ**（`autosave.ts`）。
+    見張り役 `createAutoPersistence` はストアと API を引数で受け取るのでタイマーごとテストできる。
+    保存は「呼んだ時点のモデル」を `markSaved({ model })` に渡し、保存中に入った変更は
+    dirty のまま残す（これを崩すと、保存中の打鍵が保存済み扱いになって失われる）。
+    セル編集中は自動保存しない（未確定の文字はまだモデルに無い）。
+    自動保存はファイルを開く・新規・復元のたびにオフへ戻し、外から開いた xlsx でオンにするときは
+    非対応要素が消えることを確認する。スモークは一時的な userData で動かし、本物の控えを汚さない。
 
 ## テストの方針
 

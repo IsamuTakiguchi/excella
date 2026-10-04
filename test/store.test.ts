@@ -762,3 +762,129 @@ describe('シート見出し（Excel のシートタブ）', () => {
     expect(names()).toEqual(['売上 4月'])
   })
 })
+
+describe('リボンのコマンド（数式・挿入・データ・表示）', () => {
+  it('オート SUM：上の数値の範囲を推定し、直せる状態で編集が始まる', () => {
+    setCell('A1', '売上')
+    setCell('A2', '10')
+    setCell('A3', '20')
+    setCell('A4', '30')
+    store().setSelection({ row: 4, col: 0 })
+    store().autoSum('SUM')
+    expect(store().editing?.text).toBe('=SUM(A2:A4)')
+    expect(store().pointing).not.toBeNull()
+    // 範囲を矢印で直せる（参照選択の続き）
+    store().movePointing(-1, 0, true)
+    expect(store().editing?.text).toBe('=SUM(A2:A3)')
+    store().commitEdit()
+    expect(valueOf('A5')).toBe(30)
+  })
+
+  it('オート SUM：範囲を選んでいれば各列の下へ入れて確定する', () => {
+    setCell('A1', '1')
+    setCell('A2', '2')
+    setCell('B1', '10')
+    setCell('B2', '20')
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 1 })
+    store().autoSum('AVERAGE')
+    expect(inputOf('A3')).toBe('=AVERAGE(A1:A2)')
+    expect(valueOf('B3')).toBe(15)
+    expect(store().editing).toBeNull()
+    // 1 回の元に戻すでまとめて消える
+    store().undo()
+    expect(inputOf('A3')).toBe('')
+    expect(inputOf('B3')).toBe('')
+  })
+
+  it('オート SUM：数値が見つからなければ空のカッコで編集を始める', () => {
+    store().setSelection({ row: 5, col: 5 })
+    store().autoSum('MAX')
+    expect(store().editing?.text).toBe('=MAX()')
+  })
+
+  it('今日の日付は日付の表示形式の値として入る', () => {
+    store().setSelection({ row: 0, col: 0 })
+    store().insertNow('date')
+    expect(typeof valueOf('A1')).toBe('number')
+    expect(store().styleAt({ row: 0, col: 0 })?.numFmt).toBe('yyyy/mm/dd')
+    expect(store().displayText({ row: 0, col: 0 })).toMatch(/^\d{4}\/\d{2}\/\d{2}$/)
+  })
+
+  it('重複の削除：最初の行を残して上に詰め、件数を知らせる', () => {
+    const rows = [
+      ['名前', '数'],
+      ['りんご', '1'],
+      ['みかん', '2'],
+      ['りんご', '1'],
+      ['ぶどう', '3'],
+      ['みかん', '2'],
+    ]
+    rows.forEach((row, r) => row.forEach((v, c) => store().setCellInput({ row: r, col: c }, v)))
+    store().setSelection({ row: 0, col: 0 }, { row: 5, col: 1 })
+    store().removeDuplicates(true)
+    expect([inputOf('A1'), inputOf('A2'), inputOf('A3'), inputOf('A4')]).toEqual([
+      '名前',
+      'りんご',
+      'みかん',
+      'ぶどう',
+    ])
+    expect(inputOf('A5')).toBe('')
+    expect(inputOf('A6')).toBe('')
+    expect(store().statusMessage).toBe(
+      '2 個の重複する値が見つかり、削除されました。3 個の一意の値が残っています。',
+    )
+  })
+
+  it('重複の削除：動かした行の数式は参照もずれる', () => {
+    setCell('A1', 'x')
+    setCell('A2', 'x')
+    setCell('A3', 'y')
+    setCell('B3', '=A3')
+    store().setSelection({ row: 0, col: 0 }, { row: 2, col: 1 })
+    store().removeDuplicates(false)
+    // 3 行目が 2 行目に上がり、数式も A2 を指す
+    expect(inputOf('A2')).toBe('y')
+    expect(inputOf('B2')).toBe('=A2')
+    expect(valueOf('B2')).toBe('y')
+  })
+
+  it('表示の切り替えはモデル（ファイル）を変えない', () => {
+    store().toggleGridlines()
+    store().toggleShowFormulas()
+    store().toggleFormulaBar()
+    expect(store().showGridlines).toBe(false)
+    expect(store().showFormulas).toBe(true)
+    expect(store().showFormulaBar).toBe(false)
+    expect(store().dirty).toBe(false)
+  })
+})
+
+describe('保存の状態（自動保存・自動回復）', () => {
+  it('保存中に編集が入ったら、未保存のまま残す', () => {
+    setCell('A1', '1')
+    const saving = store().model
+    setCell('A2', '2') // 保存の最中に打った
+    store().markSaved('/tmp/book.xlsx', 'book.xlsx', { model: saving })
+    expect(store().dirty).toBe(true)
+    store().markSaved('/tmp/book.xlsx', 'book.xlsx')
+    expect(store().dirty).toBe(false)
+  })
+
+  it('復元した中身は未保存として開き、自動保存はオフ', () => {
+    setCell('A1', '戻すデータ')
+    const snapshot = structuredClone(store().model)
+    store().newWorkbook()
+    store().setAutoSave(true)
+    store().restoreWorkbook(snapshot, null, '新しいブック')
+    expect(inputOf('A1')).toBe('戻すデータ')
+    expect(store().dirty).toBe(true)
+    expect(store().autoSave).toBe(false)
+  })
+
+  it('別のファイルを開くと自動保存はオフに戻る', () => {
+    store().setAutoSave(true)
+    store().loadWorkbook(structuredClone(store().model), '/tmp/other.xlsx', 'other.xlsx')
+    expect(store().autoSave).toBe(false)
+    expect(store().fileOrigin).toBe('opened')
+  })
+})
