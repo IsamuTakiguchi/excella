@@ -216,6 +216,52 @@ body,
   min-height: 30px;
 }
 
+.toolbar .items.stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 60px;
+}
+
+.toolbar .row {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 28px;
+}
+
+/* 分割ボタン（左で実行、▾ で選ぶ）。Excel の色・貼り付け・オート SUM と同じ形 */
+.toolbar .split {
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar .split > button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.toolbar button.caret-only {
+  min-width: 14px;
+  padding: 0 1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.toolbar select.font-name {
+  width: 128px;
+}
+
+.toolbar select.font-size {
+  width: 58px;
+}
+
+.toolbar select.number-format {
+  width: 156px;
+  max-width: 156px;
+}
+
 .toolbar .group-label {
   margin-top: 2px;
   color: var(--muted);
@@ -382,10 +428,36 @@ body,
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
 }
 
+.swatch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .swatch-grid {
   display: grid;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(5, auto);
   gap: 6px;
+}
+
+.swatch-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.swatch-more input {
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
 }
 
 .palette-popover .swatch {
@@ -407,6 +479,145 @@ body,
   height: 32px;
   padding: 0 10px;
   white-space: nowrap;
+}
+
+.menu-list hr {
+  width: 100%;
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.toolbar button.with-caret.text-button {
+  gap: 4px;
+  padding: 0 6px;
+}
+
+/* ---------- 検索と置換 ---------- */
+.find-dialog {
+  position: fixed;
+  top: 132px;
+  right: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 0 14px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+
+.find-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin: 0 -14px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.find-tabs button {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.find-tabs button.active {
+  border-bottom-color: var(--green);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.find-tabs .find-close {
+  margin-left: auto;
+  padding: 0 8px;
+  font-size: 16px;
+}
+
+.find-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.find-field input,
+.find-options select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.find-field input:focus {
+  outline: 2px solid var(--green);
+  outline-offset: -1px;
+}
+
+.find-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--green-dark);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.find-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.find-options label:not(.dialog-check) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.find-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.find-actions button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.find-actions button.primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+
+.find-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .border-popover {
@@ -536,6 +747,11 @@ body,
   caret-color: #000;
   opacity: 1;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+  /* 長い文字や Alt+Enter の改行に合わせて、入力欄を右と下へ広げる（Excel と同じ） */
+  field-sizing: content;
+  max-width: 70vw;
+  max-height: 50vh;
+  white-space: pre;
 }
 
 /* ---------- シートタブ ---------- */
@@ -1223,6 +1439,10 @@ body,
     height: 34px;
   }
 
+  .toolbar button.caret-only {
+    min-width: 20px;
+  }
+
   .toolbar.compact .items {
     min-height: 40px;
   }
@@ -1257,7 +1477,9 @@ body,
   .sheet-rename,
   .cell-input,
   .toolbar select,
-  .toolbar input {
+  .toolbar input,
+  .find-field input,
+  .find-options select {
     font-size: 16px;
   }
 

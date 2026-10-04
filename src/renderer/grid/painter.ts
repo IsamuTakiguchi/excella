@@ -8,14 +8,16 @@
  */
 
 import { colToLetter, rangeContains, type Range } from '@shared/a1'
+import { DEFAULT_FONT_STACK, fontFamilyOf } from '@shared/fonts'
 import {
   BORDER_DEFAULT_COLOR,
   BORDER_WIDTH_PX,
-  DEFAULT_FONT_SIZE,
+  fontPx,
   type CellBorders,
   type CellStyle,
 } from '@shared/model'
 import { offsetOf, sizeOf, visibleRange, type Sizes } from './geometry'
+import { LINE_HEIGHT_RATIO, overflowCols, wrapText } from './textLayout'
 
 export type PaintContext = {
   ctx: CanvasRenderingContext2D
@@ -34,6 +36,8 @@ export type PaintContext = {
   /** 値が数値かどうか（既定の右寄せ判定に使う） */
   isNumeric: (row: number, col: number) => boolean
   styleAt: (row: number, col: number) => CellStyle | undefined
+  /** 表示形式の [Red] などで決まる文字色。書式の文字色より優先する */
+  textColorAt?: (row: number, col: number) => string | undefined
   /** 切り取り・コピー中の点線枠 */
   marquee?: Range | null
   /** 結合セル。左上のセルの内容を矩形いっぱいに描く */
@@ -79,11 +83,13 @@ const COLORS = {
   marquee: '#107c41',
 }
 
-/** styles.css の --font-sans と同じ順序にすること（ずれると UI と字が変わる） */
-const FONT_FAMILY =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Meiryo UI", "Hiragino Sans", "Noto Sans JP", sans-serif'
 const headerFont = (zoom: number, bold: boolean): string =>
-  `${bold ? 700 : 500} ${Math.round(12 * zoom)}px ${FONT_FAMILY}`
+  `${bold ? 700 : 500} ${Math.round(12 * zoom)}px ${DEFAULT_FONT_STACK}`
+
+/** セルの文字の左右の余白（px、倍率 1） */
+const CELL_PAD = 5
+/** 画面外の列から、はみ出して見えてくる文字を探す範囲 */
+const OVERFLOW_LOOKAROUND = 20
 
 /**
  * セルのフォント指定。自動調整の計測でも同じものを使う。
@@ -94,10 +100,29 @@ export function cellFontOf(style: CellStyle | undefined): string {
 }
 
 function cellFont(style: CellStyle | undefined, zoom: number): string {
-  const size = (style?.fontSize ?? DEFAULT_FONT_SIZE) * zoom
+  const size = fontPx(style?.fontSize) * zoom
   const weight = style?.bold ? '600' : '400'
   const italic = style?.italic ? 'italic ' : ''
-  return `${italic}${weight} ${size}px ${FONT_FAMILY}`
+  return `${italic}${weight} ${size}px ${fontFamilyOf(style?.fontName)}`
+}
+
+/**
+ * 折り返しのある文字の行数を数える（行の高さの自動調整用、倍率 1）。
+ * 折り返さないセルは改行の数だけを数える
+ */
+export function cellLineCount(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  style: CellStyle | undefined,
+  width: number,
+): number {
+  if (!text) return 0
+  if (!style?.wrap) return 1
+  ctx.save()
+  ctx.font = cellFontOf(style)
+  const lines = wrapText(text, Math.max(1, width - CELL_PAD * 2), (s) => ctx.measureText(s).width)
+  ctx.restore()
+  return lines.length
 }
 
 /** 範囲の矩形（セル本体の座標系） */
@@ -350,14 +375,17 @@ function paintPane(p: PaintContext, pane: Pane): void {
     }
   }
 
-  // テキスト
+  // テキスト。画面外の列の文字がはみ出して見えてくることがあるので、少し外側から描く
   ctx.textBaseline = 'middle'
+  const textFirst = Math.max(0, colRange.first - OVERFLOW_LOOKAROUND)
+  const textLast = Math.min(p.colCount - 1, colRange.last + OVERFLOW_LOOKAROUND)
   for (let r = rowRange.first; r <= rowRange.last; r++) {
-    for (let c = colRange.first; c <= colRange.last; c++) {
+    for (let c = textFirst; c <= textLast; c++) {
+      const outside = c < colRange.first || c > colRange.last
       const merge = mergeAt(p.merges, r, c)
-      // 結合の従セルには何も描かない
-      if (merge && (merge.r0 !== r || merge.c0 !== c)) continue
-      drawCellText(p, r, c, merge)
+      if (merge && (outside || merge.r0 !== r || merge.c0 !== c)) continue
+      // 結合の従セルには何も描かない。画面外のセルは、はみ出すときだけ描く
+      drawCellText(p, r, c, merge, outside)
     }
   }
 
@@ -373,7 +401,7 @@ function paintPane(p: PaintContext, pane: Pane): void {
         merge.c0 >= colRange.first &&
         merge.c0 <= colRange.last
       if (inside) continue // 上のループで描画済み
-      drawCellText(p, merge.r0, merge.c0, merge)
+      drawCellText(p, merge.r0, merge.c0, merge, false)
     }
   }
 
@@ -488,53 +516,148 @@ function drawBorders(
   }
 }
 
-/** 1 セル（または結合範囲）のテキストを描く。呼び出し側で clip / translate 済みであること */
-function drawCellText(p: PaintContext, r: number, c: number, merge: Range | null): void {
+function cellRect(p: PaintContext, r: number, c: number) {
+  return {
+    x: offsetOf(p.cols, c),
+    y: offsetOf(p.rows, r),
+    w: sizeOf(p.cols, c),
+    h: sizeOf(p.rows, r),
+  }
+}
+
+/**
+ * はみ出した文字の下にある目盛線を消す（Excel と同じく、文字が続いて見えるように）。
+ * 罫線が引かれている境目は消さない。
+ */
+function eraseGridlines(p: PaintContext, r: number, fromCol: number, toCol: number): void {
+  if (p.gridlines === false) return
+  const { ctx } = p
+  const y = offsetOf(p.rows, r)
+  const h = sizeOf(p.rows, r)
+  for (let k = fromCol + 1; k <= toCol; k++) {
+    const leftStyle = p.styleAt(r, k - 1)
+    const rightStyle = p.styleAt(r, k)
+    if (leftStyle?.borders?.right || rightStyle?.borders?.left) continue
+    ctx.fillStyle = rightStyle?.bg ?? leftStyle?.bg ?? COLORS.cellBg
+    ctx.fillRect(Math.floor(offsetOf(p.cols, k)), y + 1, 1, h - 1)
+  }
+}
+
+/**
+ * 1 セル（または結合範囲）のテキストを描く。呼び出し側で clip / translate 済みであること。
+ * onlyIfOverflowing は画面外のセル用で、隣へはみ出さない文字は描かない。
+ */
+function drawCellText(
+  p: PaintContext,
+  r: number,
+  c: number,
+  merge: Range | null,
+  onlyIfOverflowing: boolean,
+): void {
   const text = p.textAt(r, c)
   if (!text) return
   const { ctx } = p
   const style = p.styleAt(r, c)
-  const rect = merge
-    ? rectOf(p, merge)
-    : {
-        x: offsetOf(p.cols, c),
-        y: offsetOf(p.rows, r),
-        w: sizeOf(p.cols, c),
-        h: sizeOf(p.rows, r),
-      }
+  if (onlyIfOverflowing && style?.wrap) return
+  const rect = merge ? rectOf(p, merge) : cellRect(p, r, c)
+  if (rect.w <= 0 || rect.h <= 0) return // 非表示の行・列
 
   ctx.save()
-  ctx.beginPath()
-  ctx.rect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2)
-  ctx.clip()
   ctx.font = cellFont(style, p.zoom)
-  ctx.fillStyle = style?.color ?? COLORS.text
+  const size = fontPx(style?.fontSize) * p.zoom
+  const lineH = size * LINE_HEIGHT_RATIO
+  const numeric = p.isNumeric(r, c)
+  const align = style?.align ?? (numeric ? 'right' : 'left')
+  const pad = CELL_PAD * Math.min(1, p.zoom)
+  const inner = Math.max(1, rect.w - pad * 2)
+  let clipX = rect.x + 1
+  let clipW = rect.w - 2
 
-  const align = style?.align ?? (p.isNumeric(r, c) ? 'right' : 'left')
-  let tx = rect.x + 5
+  let lines: string[]
+  if (style?.wrap) {
+    lines = wrapText(text, inner, (s) => ctx.measureText(s).width)
+  } else {
+    // 折り返さないセルの改行は空白として 1 行に並べる（Excel と同じ）
+    let single = text.includes('\n') ? text.replace(/\n/g, ' ') : text
+    const width = ctx.measureText(single).width
+    let overflowing = false
+    if (width > inner) {
+      if (numeric) {
+        // 数値は途中で切ると読み違えるので、Excel と同じく # で埋める
+        single = '#'.repeat(Math.max(1, Math.floor(inner / ctx.measureText('#').width)))
+      } else if (!merge) {
+        const ext = overflowCols({
+          col: c,
+          colCount: p.colCount,
+          align,
+          excess: width - inner,
+          widthOf: (col) => sizeOf(p.cols, col),
+          isFree: (col) => !p.textAt(r, col) && !mergeAt(p.merges, r, col),
+        })
+        if (ext.left > 0 || ext.right > 0) {
+          overflowing = true
+          const x0 = offsetOf(p.cols, c - ext.left)
+          const x1 = offsetOf(p.cols, c + ext.right + 1)
+          clipX = x0 + 1
+          clipW = x1 - x0 - 2
+          eraseGridlines(p, r, c - ext.left, c + ext.right)
+        }
+      }
+    }
+    if (onlyIfOverflowing && !overflowing) {
+      ctx.restore()
+      return
+    }
+    lines = [single]
+  }
+
+  ctx.beginPath()
+  ctx.rect(clipX, rect.y + 1, clipW, rect.h - 2)
+  ctx.clip()
+  const color = p.textColorAt?.(r, c) ?? style?.color ?? COLORS.text
+  ctx.fillStyle = color
+  ctx.strokeStyle = color
+  ctx.lineWidth = Math.max(1, Math.round(size / 14))
+
+  let tx = rect.x + pad
   if (align === 'right') {
     ctx.textAlign = 'right'
-    tx = rect.x + rect.w - 5
+    tx = rect.x + rect.w - pad
   } else if (align === 'center') {
     ctx.textAlign = 'center'
     tx = rect.x + rect.w / 2
   } else {
     ctx.textAlign = 'left'
   }
-  ctx.fillText(text, tx, rect.y + rect.h / 2 + 1)
 
-  if (style?.underline) {
-    const metrics = ctx.measureText(text)
-    const uy =
-      Math.round(rect.y + rect.h / 2 + (style.fontSize ?? DEFAULT_FONT_SIZE) * p.zoom * 0.45) + 0.5
-    const ux =
-      align === 'right' ? tx - metrics.width : align === 'center' ? tx - metrics.width / 2 : tx
-    ctx.strokeStyle = style.color ?? COLORS.text
+  // 上下の配置。省略時は Excel と同じく下揃え
+  const total = lines.length * lineH
+  const top =
+    style?.valign === 'top'
+      ? rect.y + 2
+      : style?.valign === 'middle'
+        ? rect.y + (rect.h - total) / 2
+        : rect.y + rect.h - 2 - total
+
+  lines.forEach((line, i) => {
+    const ty = top + lineH * (i + 0.5) + 1
+    ctx.fillText(line, tx, ty)
+    if (!style?.underline && !style?.strike) return
+    const w = ctx.measureText(line).width
+    const lx = align === 'right' ? tx - w : align === 'center' ? tx - w / 2 : tx
     ctx.beginPath()
-    ctx.moveTo(ux, uy)
-    ctx.lineTo(ux + metrics.width, uy)
+    if (style.underline) {
+      const uy = Math.round(ty + size * 0.45) + 0.5
+      ctx.moveTo(lx, uy)
+      ctx.lineTo(lx + w, uy)
+    }
+    if (style.strike) {
+      const sy = Math.round(ty - size * 0.05) + 0.5
+      ctx.moveTo(lx, sy)
+      ctx.lineTo(lx + w, sy)
+    }
     ctx.stroke()
-  }
+  })
   ctx.restore()
 }
 
@@ -554,6 +677,7 @@ function paintColHeader(p: PaintContext, x0: number, w: number, scrollX: number,
   for (let c = span.first; c <= span.last; c++) {
     const x = offsetOf(p.cols, c)
     const cw = sizeOf(p.cols, c)
+    if (cw === 0) continue // 非表示の列
     const selected = c >= sel.c0 && c <= sel.c1
     if (selected) {
       // Excel と同じく、選択中の列見出しは薄い緑に塗り、下辺を緑の線で強調する
@@ -590,6 +714,7 @@ function paintRowHeader(p: PaintContext, y0: number, h: number, scrollY: number,
   for (let r = span.first; r <= span.last; r++) {
     const y = offsetOf(p.rows, r)
     const rh = sizeOf(p.rows, r)
+    if (rh === 0) continue // 非表示の行
     const selected = r >= sel.r0 && r <= sel.r1
     if (selected) {
       ctx.fillStyle = COLORS.headerActiveBg

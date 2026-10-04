@@ -11,6 +11,8 @@ export type CellData = {
 }
 
 export type HorizontalAlign = 'left' | 'center' | 'right'
+/** 上下の配置。省略時は Excel と同じく下揃え */
+export type VerticalAlign = 'top' | 'middle' | 'bottom'
 
 /** 罫線の太さ。xlsx の thin / medium / thick に対応する */
 export type BorderWeight = 'thin' | 'medium' | 'thick'
@@ -41,14 +43,22 @@ export type CellStyle = {
   bold?: boolean
   italic?: boolean
   underline?: boolean
+  /** 取り消し線 */
+  strike?: boolean
+  /** フォント名（'游ゴシック' など）。省略時は既定のフォント */
+  fontName?: string
   /** 文字色 '#RRGGBB' */
   color?: string
   /** 背景色 '#RRGGBB' */
   bg?: string
   align?: HorizontalAlign
+  /** 上下の配置。省略時は下揃え */
+  valign?: VerticalAlign
+  /** 折り返して全体を表示する */
+  wrap?: boolean
   /** 表示形式コード（numberFormat.ts が解釈するサブセット） */
   numFmt?: string
-  /** pt 単位 */
+  /** フォントサイズ（pt）。省略時は DEFAULT_FONT_PT */
   fontSize?: number
   /** 四辺の罫線 */
   borders?: CellBorders
@@ -74,6 +84,10 @@ export type SheetModel = {
   tabColor?: string
   /** 非表示のシート。少なくとも 1 枚は表示されている必要がある */
   hidden?: boolean
+  /** 非表示の行（0 始まり） */
+  hiddenRows?: number[]
+  /** 非表示の列（0 始まり） */
+  hiddenCols?: number[]
 }
 
 export type WorkbookModel = {
@@ -86,7 +100,14 @@ export const DEFAULT_COL_WIDTH = 88
 export const DEFAULT_ROW_HEIGHT = 22
 export const DEFAULT_ROW_COUNT = 200
 export const DEFAULT_COL_COUNT = 40
-export const DEFAULT_FONT_SIZE = 13
+/** 既定のフォントサイズ（pt）。Excel と同じ 11pt */
+export const DEFAULT_FONT_PT = 11
+/** 既定のフォントサイズを画面で何 px に描くか。行高 22px に合う大きさ */
+export const DEFAULT_FONT_PX = 13
+/** pt → 画面上の px。既定の 11pt がちょうど DEFAULT_FONT_PX になる比率で描く */
+export function fontPx(pt: number | undefined): number {
+  return ((pt ?? DEFAULT_FONT_PT) * DEFAULT_FONT_PX) / DEFAULT_FONT_PT
+}
 
 let sheetSeq = 0
 

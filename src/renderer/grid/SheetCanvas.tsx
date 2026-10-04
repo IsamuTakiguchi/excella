@@ -3,17 +3,9 @@ import { a1ToRange, findMerge, type Addr, type Range } from '@shared/a1'
 import { isFormula, parseRefs } from '@shared/formulaRefs'
 import { DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT } from '@shared/model'
 import { useStore } from '../store/workbookStore'
-import {
-  autofitWidth,
-  borderHit,
-  buildSizes,
-  headerSize,
-  indexAt,
-  offsetOf,
-  sizeOf,
-  totalSize,
-} from './geometry'
-import { cellFontOf, FILL_HANDLE_SIZE, paint, REF_COLORS } from './painter'
+import { fitColumnWidth, fitRowHeight } from './autofit'
+import { borderHit, buildSizes, headerSize, indexAt, offsetOf, sizeOf, totalSize } from './geometry'
+import { FILL_HANDLE_SIZE, paint, REF_COLORS } from './painter'
 import { CellInput } from './CellInput'
 import { isTouchDevice } from '../device'
 import { focusGrid, gridInput, isGridInput } from './focus'
@@ -87,6 +79,7 @@ export function SheetCanvas(): React.JSX.Element {
   const showFormulas = useStore((s) => s.showFormulas)
   const showGridlines = useStore((s) => s.showGridlines)
   const clipboard = useStore((s) => s.clipboard)
+  const formatPainter = useStore((s) => s.formatPainter)
   const model = useStore((s) => s.model)
 
   const sheet = useMemo(
@@ -97,12 +90,12 @@ export function SheetCanvas(): React.JSX.Element {
   // 表示倍率は描画とヒットテストにだけかける（モデルの行高・列幅は素のまま）
   const { w: HEADER_W, h: HEADER_H } = useMemo(() => headerSize(zoom), [zoom])
   const cols = useMemo(
-    () => buildSizes(sheet.colCount, sheet.colWidths, DEFAULT_COL_WIDTH, zoom),
-    [sheet.colCount, sheet.colWidths, zoom],
+    () => buildSizes(sheet.colCount, sheet.colWidths, DEFAULT_COL_WIDTH, zoom, sheet.hiddenCols),
+    [sheet.colCount, sheet.colWidths, zoom, sheet.hiddenCols],
   )
   const rows = useMemo(
-    () => buildSizes(sheet.rowCount, sheet.rowHeights, DEFAULT_ROW_HEIGHT, zoom),
-    [sheet.rowCount, sheet.rowHeights, zoom],
+    () => buildSizes(sheet.rowCount, sheet.rowHeights, DEFAULT_ROW_HEIGHT, zoom, sheet.hiddenRows),
+    [sheet.rowCount, sheet.rowHeights, zoom, sheet.hiddenRows],
   )
   const merges = useMemo(
     () => sheet.merges.map(a1ToRange).filter((r): r is Range => r !== null),
@@ -199,6 +192,7 @@ export function SheetCanvas(): React.JSX.Element {
         typeof state.displayValue({ row, col }) === 'number' &&
         !(showFormulas && state.inputText({ row, col }).startsWith('=')),
       styleAt: (row, col) => state.styleAt({ row, col }),
+      textColorAt: (row, col) => state.displayColor({ row, col }),
       marquee: clipboard && clipboard.origin.sheetId === sheet.id ? clipboard.origin.range : null,
       merges,
       frozen: sheet.frozen,
@@ -325,25 +319,6 @@ export function SheetCanvas(): React.JSX.Element {
       return merge ? { row: merge.r0, col: merge.c0 } : addr
     },
     [cols, rows, sheet.merges, toGrid],
-  )
-
-  /** 列の内容に合わせた幅を計算する（ヘッダ境界のダブルクリック用） */
-  const autofitColumn = useCallback(
-    (col: number): number => {
-      const ctx = canvasRef.current?.getContext('2d')
-      const state = useStore.getState()
-      if (!ctx) return DEFAULT_COL_WIDTH
-      return autofitWidth(sheet.rowCount, (row) => {
-        const text = state.displayText({ row, col })
-        if (!text) return 0
-        ctx.save()
-        ctx.font = cellFontOf(state.styleAt({ row, col }))
-        const width = ctx.measureText(text).width
-        ctx.restore()
-        return width
-      })
-    },
-    [sheet.rowCount],
   )
 
   // --- マウス操作 -------------------------------------------------------
@@ -529,6 +504,14 @@ export function SheetCanvas(): React.JSX.Element {
       setFillPreview(null)
       if (target) useStore.getState().fillFrom(drag.source, target)
     }
+    // 書式のコピー中なら、選び終えた範囲に書式を塗る
+    if (
+      drag &&
+      (drag.kind === 'select' || drag.kind === 'select-col' || drag.kind === 'select-row')
+    ) {
+      const store = useStore.getState()
+      if (store.formatPainter) store.applyFormatPainter(store.selectionRange())
+    }
   }
 
   const onContextMenu = (e: React.MouseEvent) => {
@@ -536,6 +519,42 @@ export function SheetCanvas(): React.JSX.Element {
     // タッチ端末では長押しのタイマーから開く（ブラウザが出す contextmenu と二重にしない）
     if (isTouchDevice()) return
     openContextMenu(e.clientX, e.clientY)
+  }
+
+  /** 行・列の見出しを右クリックしたときだけ出す項目（Excel と同じく非表示・再表示など） */
+  const headerItems = (zone: string, sel: Range): ContextMenuItem[] => {
+    const store = () => useStore.getState()
+    if (zone === 'col-header') {
+      return [
+        {
+          kind: 'item',
+          label: '列の幅の自動調整',
+          onSelect: () => {
+            for (let c = sel.c0; c <= sel.c1; c++) store().setColWidth(c, fitColumnWidth(c))
+          },
+        },
+        { kind: 'item', label: '非表示', onSelect: () => store().hideCols(sel.c0, sel.c1) },
+        { kind: 'item', label: '再表示', onSelect: () => store().unhideCols(sel.c0, sel.c1) },
+        { kind: 'separator' },
+      ]
+    }
+    if (zone === 'row-header') {
+      return [
+        {
+          kind: 'item',
+          label: '行の高さの自動調整',
+          onSelect: () => {
+            const heights: Record<number, number> = {}
+            for (let r = sel.r0; r <= sel.r1; r++) heights[r] = fitRowHeight(r)
+            store().setRowHeights(heights)
+          },
+        },
+        { kind: 'item', label: '非表示', onSelect: () => store().hideRows(sel.r0, sel.r1) },
+        { kind: 'item', label: '再表示', onSelect: () => store().unhideRows(sel.r0, sel.r1) },
+        { kind: 'separator' },
+      ]
+    }
+    return []
   }
 
   const openContextMenu = (clientX: number, clientY: number) => {
@@ -567,7 +586,20 @@ export function SheetCanvas(): React.JSX.Element {
         disabled: useStore.getState().clipboard === null,
         onSelect: () => useStore.getState().paste(),
       },
+      {
+        kind: 'item',
+        label: '値の貼り付け',
+        disabled: useStore.getState().clipboard === null,
+        onSelect: () => useStore.getState().paste(undefined, 'values'),
+      },
+      {
+        kind: 'item',
+        label: '書式の貼り付け',
+        disabled: useStore.getState().clipboard === null,
+        onSelect: () => useStore.getState().paste(undefined, 'formats'),
+      },
       { kind: 'separator' },
+      ...headerItems(zone, sel),
       {
         kind: 'item',
         label: `${rowSpan} 行を挿入`,
@@ -620,12 +652,13 @@ export function SheetCanvas(): React.JSX.Element {
     if (zone === 'col-header') {
       const hit = borderHit(cols, x, isTouchDevice() ? 10 : 4)
       // Excel と同じく、境界のダブルクリックは内容に合わせた幅にする
-      if (hit !== null) store.setColWidth(hit, autofitColumn(hit))
+      if (hit !== null) store.setColWidth(hit, fitColumnWidth(hit))
       return
     }
     if (zone === 'row-header') {
       const hit = borderHit(rows, y, isTouchDevice() ? 10 : 4)
-      if (hit !== null) store.setRowHeight(hit, DEFAULT_ROW_HEIGHT)
+      // 行も同じく内容（折り返し・文字の大きさ）に合わせた高さにする
+      if (hit !== null) store.setRowHeight(hit, fitRowHeight(hit))
       return
     }
     if (zone === 'body') store.beginEdit(toAddr(e.clientX, e.clientY))
@@ -663,6 +696,7 @@ export function SheetCanvas(): React.JSX.Element {
         e.preventDefault()
         return
       case 'Escape':
+        store.cancelFormatPainter()
         store.setStatus('')
         return
       case 'Delete':
@@ -688,6 +722,14 @@ export function SheetCanvas(): React.JSX.Element {
         break
     }
 
+    // 列全体（Ctrl+Space）・行全体（Shift+Space）の選択
+    if (e.key === ' ' && (e.ctrlKey || e.shiftKey) && !e.metaKey && !e.altKey) {
+      if (e.ctrlKey) store.selectColumn(store.selection.anchor.col, false)
+      else store.selectRow(store.selection.anchor.row, false)
+      e.preventDefault()
+      return
+    }
+
     // オート SUM（Alt+=）
     if (e.altKey && !mod && e.key === '=') {
       store.autoSum('SUM')
@@ -704,6 +746,12 @@ export function SheetCanvas(): React.JSX.Element {
       }
       if (key === 'b') {
         store.applyStyle({ bold: true }, true)
+        e.preventDefault()
+        return
+      }
+      // 下方向へコピー（Ctrl+D）・右方向へコピー（Ctrl+R）。ブラウザのブックマークや再読み込みより優先
+      if (key === 'd' || key === 'r') {
+        store.fillDirection(key === 'd' ? 'down' : 'right')
         e.preventDefault()
         return
       }
@@ -771,7 +819,8 @@ export function SheetCanvas(): React.JSX.Element {
         onTouchMove={onTouchMove}
         onTouchEnd={cancelLongPress}
         onTouchCancel={cancelLongPress}
-        style={{ cursor }}
+        // 書式のコピー中は、塗る先を選ぶところだと分かるカーソルにする
+        style={{ cursor: formatPainter && cursor === 'default' ? 'copy' : cursor }}
       >
         <div className="grid-spacer" style={{ width: totalW, height: totalH }} />
         <canvas

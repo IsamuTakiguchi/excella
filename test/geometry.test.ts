@@ -114,3 +114,13 @@ describe('表示倍率', () => {
     expect(clampZoom(1.3000000000000003)).toBe(1.3)
   })
 })
+
+describe('非表示の行・列', () => {
+  it('幅 0 になり、座標から引いても選ばれない', () => {
+    const sizes = buildSizes(4, {}, 10, 1, [1])
+    expect(sizeOf(sizes, 1)).toBe(0)
+    expect(offsetOf(sizes, 2)).toBe(10)
+    expect(indexAt(sizes, 10)).toBe(2)
+    expect(indexAt(sizes, 5)).toBe(0)
+  })
+})

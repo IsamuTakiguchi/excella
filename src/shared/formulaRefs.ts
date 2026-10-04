@@ -108,3 +108,36 @@ export function parseRefs(formula: string): RefSpan[] {
 
   return out
 }
+
+/** F4 で巡回する参照の形（Excel と同じ順） A1 → $A$1 → A$1 → $A1 → A1 */
+function nextAbsolute(ref: string): (letters: string, digits: string) => string {
+  const m = /^(\$?)([A-Za-z]+)(\$?)(\d+)$/.exec(ref)
+  const colAbs = m?.[1] === '$'
+  const rowAbs = m?.[3] === '$'
+  if (!colAbs && !rowAbs) return (l, d) => `$${l}$${d}`
+  if (colAbs && rowAbs) return (l, d) => `${l}$${d}`
+  if (!colAbs && rowAbs) return (l, d) => `$${l}${d}`
+  return (l, d) => `${l}${d}`
+}
+
+/**
+ * キャレットの位置（直後を含む）にある参照の絶対／相対を切り替える（F4）。
+ * 範囲 A1:B2 は先頭の参照の状態を基準に両端をそろえる。参照が無ければ null。
+ */
+export function cycleAbsolute(text: string, caret: number): { text: string; caret: number } | null {
+  if (!isFormula(text)) return null
+  const span = parseRefs(text).find((s) => caret >= s.start && caret <= s.end)
+  if (!span) return null
+  const parts = span.text.split(':')
+  const make = nextAbsolute(parts[0])
+  const replaced = parts
+    .map((part) => {
+      const m = /^\$?([A-Za-z]+)\$?(\d+)$/.exec(part)
+      return m ? make(m[1], m[2]) : part
+    })
+    .join(':')
+  return {
+    text: text.slice(0, span.start) + replaced + text.slice(span.end),
+    caret: span.start + replaced.length,
+  }
+}

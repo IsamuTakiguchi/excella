@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canInsertRef, isFormula, parseRefs } from '../src/shared/formulaRefs'
+import { canInsertRef, cycleAbsolute, isFormula, parseRefs } from '../src/shared/formulaRefs'
 
 describe('isFormula', () => {
   it('= で始まるものだけを数式とみなす', () => {
@@ -81,5 +81,26 @@ describe('parseRefs', () => {
   it('参照が無ければ空', () => {
     expect(texts('=1+2')).toEqual([])
     expect(texts('=')).toEqual([])
+  })
+})
+
+describe('cycleAbsolute（F4）', () => {
+  it('A1 → $A$1 → A$1 → $A1 → A1 と巡回する', () => {
+    let state = { text: '=A1+1', caret: 3 }
+    const seen: string[] = []
+    for (let i = 0; i < 4; i++) {
+      state = cycleAbsolute(state.text, state.caret)!
+      seen.push(state.text)
+    }
+    expect(seen).toEqual(['=$A$1+1', '=A$1+1', '=$A1+1', '=A1+1'])
+  })
+
+  it('範囲は両端をそろえ、キャレットは参照の直後へ', () => {
+    expect(cycleAbsolute('=SUM(A1:B2)', 6)).toEqual({ text: '=SUM($A$1:$B$2)', caret: 14 })
+  })
+
+  it('参照の外や数式でなければ何もしない', () => {
+    expect(cycleAbsolute('=SUM(A1)', 2)).toBeNull()
+    expect(cycleAbsolute('A1', 2)).toBeNull()
   })
 })

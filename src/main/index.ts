@@ -155,6 +155,25 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.setSelection({ row: 0, col: 0 }, { row: 0, col: 3 })
     store.applyBorders('bottom', { weight: 'medium', color: '#107C41' })
 
+    // 書式の例：はみ出し・負数の赤・取り消し線・フォント・日付の入力・折り返し
+    store.setCellInput({ row: 0, col: 5 }, '書式の例（長い文字は右の空いたセルへはみ出す）')
+    store.setSelection({ row: 0, col: 5 })
+    store.applyStyle({ bold: true, color: '#107C41' })
+    store.setSelection({ row: 1, col: 5 })
+    store.applyStyle({ numFmt: '#,##0;[Red]-#,##0' })
+    store.setCellInput({ row: 1, col: 5 }, '-1200')
+    store.setCellInput({ row: 1, col: 6 }, '取り消し線')
+    store.setSelection({ row: 1, col: 6 })
+    store.applyStyle({ strike: true })
+    store.setCellInput({ row: 1, col: 7 }, '明朝 14pt')
+    store.setSelection({ row: 1, col: 7 })
+    store.applyStyle({ fontName: 'ＭＳ 明朝', fontSize: 14 })
+    store.setCellInput({ row: 2, col: 5 }, '2024/1/31')
+    store.setCellInput({ row: 2, col: 6 }, '折り返して全体を表示する長い文章')
+    store.setSelection({ row: 2, col: 6 })
+    store.applyStyle({ wrap: true, valign: 'top' })
+    store.setRowHeights({ 2: 40 }, false)
+
     // 見出し行を 1 行だけ固定し、合計セルを選んだ状態にする
     store.setSelection({ row: 1, col: 0 })
     store.toggleFreeze()

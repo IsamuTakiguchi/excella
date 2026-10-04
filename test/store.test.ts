@@ -888,3 +888,245 @@ describe('保存の状態（自動保存・自動回復）', () => {
     expect(store().fileOrigin).toBe('opened')
   })
 })
+
+describe('回帰: 数字だけの文字列が数値に化ける', () => {
+  it('xlsx から来た 007 は 007 と表示され、行を挿入しても文字列のまま', () => {
+    const model = structuredClone(store().model)
+    model.sheets[0].cells = { A1: { v: '007' }, A2: { f: '=A1&"x"' } }
+    store().loadWorkbook(model, null, 't.xlsx')
+    expect(store().displayText({ row: 0, col: 0 })).toBe('007')
+    expect(valueOf('A2')).toBe('007x')
+    store().insertRows(0, 1)
+    expect(store().activeSheet().cells['A2']).toEqual({ v: '007' })
+    expect(inputOf('A2')).toBe('007')
+  })
+})
+
+describe('入力の解釈と表示形式', () => {
+  it('日付を打つと日付の形式が付く', () => {
+    setCell('A1', '2024/1/31')
+    expect(valueOf('A1')).toBe(45322)
+    expect(store().displayText({ row: 0, col: 0 })).toBe('2024/1/31')
+  })
+
+  it('すでに表示形式があれば変えない', () => {
+    store().applyStyle({ numFmt: 'yyyy-mm-dd' })
+    setCell('A1', '2024/1/31')
+    expect(store().displayText({ row: 0, col: 0 })).toBe('2024-01-31')
+  })
+
+  it('文字列（@）形式のセルは数字を文字列のまま持つ', () => {
+    store().applyStyle({ numFmt: '@' })
+    setCell('A1', '0123')
+    expect(valueOf('A1')).toBe('0123')
+    expect(store().activeSheet().cells['A1']).toEqual({ v: '0123' })
+  })
+
+  it('改行を含む入力は折り返しになり、行が高くなる', () => {
+    setCell('A1', '1 行目\n2 行目')
+    expect(store().styleAt({ row: 0, col: 0 })?.wrap).toBe(true)
+    expect(store().activeSheet().rowHeights[0]).toBeGreaterThan(22)
+  })
+
+  it('外から貼り付けた TSV も同じように解釈する', () => {
+    store().paste('2024/1/31\t1,500')
+    expect(valueOf('A1')).toBe(45322)
+    expect(valueOf('B1')).toBe(1500)
+    expect(store().styleAt({ row: 0, col: 1 })?.numFmt).toBe('#,##0')
+  })
+
+  it('[Red] の色を返す', () => {
+    store().applyStyle({ numFmt: '#,##0;[Red]-#,##0' })
+    setCell('A1', '-5')
+    expect(store().displayColor({ row: 0, col: 0 })).toBe('#FF0000')
+    setCell('A1', '5')
+    expect(store().displayColor({ row: 0, col: 0 })).toBeUndefined()
+  })
+})
+
+describe('ホームタブの書式', () => {
+  it('フォントサイズを大きくすると行が高くなり、undo で戻る', () => {
+    store().applyStyle({ fontSize: 24 })
+    expect(store().activeSheet().rowHeights[0]).toBeGreaterThan(30)
+    store().undo()
+    expect(store().activeSheet().rowHeights[0]).toBeUndefined()
+  })
+
+  it('小数点以下の桁数を増やす・減らす', () => {
+    setCell('A1', '1.5')
+    store().adjustDecimals(1)
+    expect(store().displayText({ row: 0, col: 0 })).toBe('1.50')
+    store().adjustDecimals(-1)
+    store().adjustDecimals(-1)
+    expect(store().displayText({ row: 0, col: 0 })).toBe('2')
+  })
+
+  it('書式のコピー／貼り付けは 1 回で終わり、写した大きさで塗る', () => {
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 0 })
+    store().applyStyle({ bold: true })
+    store().setSelection({ row: 0, col: 0 }, { row: 1, col: 0 })
+    store().startFormatPainter(false)
+    store().applyFormatPainter({ r0: 0, c0: 2, r1: 0, c1: 2 })
+    expect(store().styleAt({ row: 0, col: 2 })?.bold).toBe(true)
+    expect(store().styleAt({ row: 1, col: 2 })?.bold).toBe(true)
+    expect(store().formatPainter).toBeNull()
+  })
+
+  it('ダブルクリックの書式コピーは Esc まで続く', () => {
+    store().applyStyle({ italic: true })
+    store().startFormatPainter(true)
+    store().applyFormatPainter({ r0: 3, c0: 3, r1: 3, c1: 3 })
+    store().applyFormatPainter({ r0: 5, c0: 5, r1: 5, c1: 5 })
+    expect(store().styleAt({ row: 5, col: 5 })?.italic).toBe(true)
+    expect(store().formatPainter).not.toBeNull()
+    store().cancelFormatPainter()
+    expect(store().formatPainter).toBeNull()
+  })
+})
+
+describe('形式を選択して貼り付け', () => {
+  beforeEach(() => {
+    setCell('A1', '2')
+    setCell('A2', '=A1*10')
+    store().setSelection({ row: 1, col: 0 })
+    store().applyStyle({ bold: true })
+  })
+
+  it('値だけを貼ると計算結果が入り、書式は付かない', async () => {
+    store().setSelection({ row: 1, col: 0 })
+    await store().copy(false)
+    store().setSelection({ row: 1, col: 2 })
+    store().paste(undefined, 'values')
+    expect(store().activeSheet().cells['C2']).toEqual({ v: 20 })
+    expect(store().styleAt({ row: 1, col: 2 })).toBeUndefined()
+  })
+
+  it('数式だけ・書式だけ', async () => {
+    store().setSelection({ row: 1, col: 0 })
+    await store().copy(false)
+    store().setSelection({ row: 1, col: 1 })
+    store().paste(undefined, 'formulas')
+    expect(inputOf('B2')).toBe('=B1*10')
+    expect(store().styleAt({ row: 1, col: 1 })).toBeUndefined()
+    store().setSelection({ row: 5, col: 5 })
+    store().paste(undefined, 'formats')
+    expect(store().styleAt({ row: 5, col: 5 })?.bold).toBe(true)
+    expect(inputOf('F6')).toBe('')
+  })
+
+  it('行列を入れ替える', async () => {
+    setCell('B1', 'x')
+    store().setSelection({ row: 0, col: 0 }, { row: 0, col: 1 })
+    await store().copy(false)
+    store().setSelection({ row: 4, col: 0 })
+    store().paste(undefined, 'transpose')
+    expect(valueOf('A5')).toBe(2)
+    expect(valueOf('A6')).toBe('x')
+  })
+})
+
+describe('下方向・右方向へコピー（Ctrl+D / Ctrl+R）', () => {
+  it('先頭行を下へ写し、数式の参照もずらす', () => {
+    setCell('A1', '1')
+    setCell('B1', '=A1*2')
+    store().setSelection({ row: 0, col: 0 }, { row: 2, col: 1 })
+    store().fillDirection('down')
+    expect(valueOf('A3')).toBe(1)
+    expect(inputOf('B3')).toBe('=A3*2')
+  })
+
+  it('1 セルなら上のセルを写す', () => {
+    setCell('A1', 'abc')
+    store().setSelection({ row: 1, col: 0 })
+    store().fillDirection('down')
+    expect(valueOf('A2')).toBe('abc')
+  })
+
+  it('右方向', () => {
+    setCell('A1', '=ROW()')
+    store().setSelection({ row: 0, col: 0 }, { row: 0, col: 2 })
+    store().fillDirection('right')
+    expect(inputOf('C1')).toBe('=ROW()')
+  })
+})
+
+describe('行・列の非表示', () => {
+  it('非表示にした行はカーソルで飛ばされ、再表示で戻る', () => {
+    store().hideRows(1, 2)
+    expect(store().activeSheet().hiddenRows).toEqual([1, 2])
+    store().setSelection({ row: 0, col: 0 })
+    store().moveSelection(1, 0, false)
+    expect(store().selection.anchor.row).toBe(3)
+    store().unhideRows(0, 3)
+    expect(store().activeSheet().hiddenRows).toBeUndefined()
+  })
+
+  it('行の挿入でずれ、削除で消える', () => {
+    store().hideCols(3, 3)
+    store().insertColumns(0, 2)
+    expect(store().activeSheet().hiddenCols).toEqual([5])
+    store().deleteColumns(5, 1)
+    expect(store().activeSheet().hiddenCols).toBeUndefined()
+  })
+
+  it('境目の 1 列を選んで再表示すると隣の隠れた列が戻る', () => {
+    store().hideCols(1, 1)
+    store().unhideCols(0, 0)
+    expect(store().activeSheet().hiddenCols).toBeUndefined()
+  })
+})
+
+describe('検索と置換', () => {
+  const options = {
+    matchCase: false,
+    wholeCell: false,
+    scope: 'sheet' as const,
+    lookIn: 'values' as const,
+  }
+
+  beforeEach(() => {
+    setCell('A1', 'りんご')
+    setCell('B3', '青りんご')
+    setCell('C2', '=1+1')
+  })
+
+  it('次を検索で順に巡回する', () => {
+    store().setSelection({ row: 0, col: 0 })
+    expect(store().find('りんご', options)).toBe(true)
+    expect(store().selection.anchor).toEqual({ row: 2, col: 1 })
+    store().find('りんご', options)
+    expect(store().selection.anchor).toEqual({ row: 0, col: 0 })
+  })
+
+  it('値と数式で探し分ける', () => {
+    expect(store().find('2', options)).toBe(true)
+    expect(store().selection.anchor).toEqual({ row: 1, col: 2 })
+    expect(store().find('1+1', options)).toBe(false)
+    expect(store().find('1+1', { ...options, lookIn: 'formulas' })).toBe(true)
+  })
+
+  it('ブック全体ではほかのシートへ移る', () => {
+    store().addSheet()
+    setCell('D4', 'みかん')
+    const second = store().model.activeSheetId
+    store().setActiveSheet(store().model.sheets[0].id)
+    expect(store().find('みかん', options)).toBe(false)
+    expect(store().find('みかん', { ...options, scope: 'book' })).toBe(true)
+    expect(store().model.activeSheetId).toBe(second)
+    expect(store().selection.anchor).toEqual({ row: 3, col: 3 })
+  })
+
+  it('すべて置換は 1 回の元に戻すで戻る', () => {
+    expect(store().replaceAll('りんご', 'ぶどう', options)).toBe(2)
+    expect(valueOf('B3')).toBe('青ぶどう')
+    store().undo()
+    expect(valueOf('B3')).toBe('青りんご')
+  })
+
+  it('置換はアクティブセルを置き換えて次へ進む', () => {
+    store().setSelection({ row: 0, col: 0 })
+    store().replaceNext('りんご', 'もも', options)
+    expect(valueOf('A1')).toBe('もも')
+    expect(store().selection.anchor).toEqual({ row: 2, col: 1 })
+  })
+})

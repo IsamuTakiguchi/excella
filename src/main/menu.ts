@@ -43,6 +43,9 @@ export function buildMenu(win: BrowserWindow): void {
         { label: '削除', accelerator: 'Delete', click: send('delete') },
         { type: 'separator' },
         { label: 'すべて選択', accelerator: 'CmdOrCtrl+A', click: send('select-all') },
+        { type: 'separator' },
+        { label: '検索…', accelerator: 'CmdOrCtrl+F', click: send('find') },
+        { label: '置換…', accelerator: 'CmdOrCtrl+H', click: send('replace') },
       ],
     },
     {
@@ -55,7 +58,8 @@ export function buildMenu(win: BrowserWindow): void {
     {
       label: '表示',
       submenu: [
-        { role: 'reload', label: '再読み込み' },
+        // 既定の Ctrl+R は Excel の「右方向へコピー」と重なるので F5 にする
+        { role: 'reload', label: '再読み込み', accelerator: 'F5' },
         { role: 'toggleDevTools', label: '開発者ツール' },
         { type: 'separator' },
         { role: 'resetZoom', label: '実際のサイズ' },

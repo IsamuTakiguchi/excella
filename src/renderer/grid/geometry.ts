@@ -35,11 +35,15 @@ export function buildSizes(
   custom: Record<number, number>,
   fallback: number,
   scale = 1,
+  hidden?: readonly number[],
 ): Sizes {
   const offsets = new Array<number>(count + 1)
+  const skip = hidden && hidden.length > 0 ? new Set(hidden) : null
   offsets[0] = 0
   for (let i = 0; i < count; i++) {
-    offsets[i + 1] = offsets[i] + Math.max(1, Math.round((custom[i] ?? fallback) * scale))
+    // 非表示の行・列は幅 0。indexAt は幅 0 のものを返さないので、クリックでも選ばれない
+    const size = skip?.has(i) ? 0 : Math.max(1, Math.round((custom[i] ?? fallback) * scale))
+    offsets[i + 1] = offsets[i] + size
   }
   return { offsets }
 }
@@ -56,7 +60,7 @@ export function totalSize(sizes: Sizes): number {
   return sizes.offsets[sizes.offsets.length - 1]
 }
 
-/** 座標からインデックスを引く（境界は右/下の側に属する） */
+/** 座標からインデックスを引く（境界は右/下の側に属する。幅 0 の非表示のものは返さない） */
 export function indexAt(sizes: Sizes, position: number): number {
   const last = sizes.offsets.length - 2
   if (position < 0) return 0

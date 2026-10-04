@@ -19,6 +19,7 @@ import {
   createSheet,
   DEFAULT_COL_COUNT,
   DEFAULT_ROW_COUNT,
+  DEFAULT_ROW_HEIGHT,
   isEmptyBorders,
   isEmptyStyle,
   type BorderSide,
@@ -109,7 +110,10 @@ function readStyle(cell: ExcelJS.Cell): CellStyle {
     if (font.bold) style.bold = true
     if (font.italic) style.italic = true
     if (font.underline) style.underline = true
+    if (font.strike) style.strike = true
     if (font.size && font.size !== 11) style.fontSize = font.size
+    // Calibri は ExcelJS が書き出す既定のフォント。持っておく意味が無いので落とす
+    if (font.name && font.name !== 'Calibri') style.fontName = font.name
     const color = argbToHex(
       typeof font.color === 'object' && font.color ? font.color.argb : undefined,
     )
@@ -124,6 +128,9 @@ function readStyle(cell: ExcelJS.Cell): CellStyle {
   if (align === 'left' || align === 'center' || align === 'right') {
     style.align = align as HorizontalAlign
   }
+  const valign = cell.alignment?.vertical
+  if (valign === 'top' || valign === 'middle') style.valign = valign
+  if (cell.alignment?.wrapText) style.wrap = true
   if (cell.numFmt && cell.numFmt !== 'General') style.numFmt = cell.numFmt
   const borders = readBorders(cell)
   if (borders) style.borders = borders
@@ -181,8 +188,11 @@ export async function workbookFromXlsxBuffer(
     let maxRow = 0
     let maxCol = 0
 
-    ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    const hiddenRows: number[] = []
+    // 空の行も見る（値の無い行にも高さや非表示が付いていることがある）
+    ws.eachRow({ includeEmpty: true }, (row, rowNumber) => {
       if (row.height) sheet.rowHeights[rowNumber - 1] = ptToPx(row.height)
+      if (row.hidden) hiddenRows.push(rowNumber - 1)
       row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
         const key = addrToA1({ row: rowNumber - 1, col: colNumber - 1 })
         const data = readCellValue(cell)
@@ -194,9 +204,13 @@ export async function workbookFromXlsxBuffer(
       })
     })
 
+    const hiddenCols: number[] = []
     ws.columns?.forEach((col, index) => {
       if (col.width) sheet.colWidths[index] = charsToPx(col.width)
+      if (col.hidden) hiddenCols.push(index)
     })
+    if (hiddenRows.length > 0) sheet.hiddenRows = hiddenRows
+    if (hiddenCols.length > 0) sheet.hiddenCols = hiddenCols
 
     const merges = (ws as unknown as { model?: { merges?: string[] } }).model?.merges
     if (Array.isArray(merges)) sheet.merges = merges.slice()
@@ -275,7 +289,9 @@ export async function xlsxBufferFromWorkbook(
       if (style.bold) font.bold = true
       if (style.italic) font.italic = true
       if (style.underline) font.underline = true
+      if (style.strike) font.strike = true
       if (style.fontSize) font.size = style.fontSize
+      if (style.fontName) font.name = style.fontName
       const color = hexToArgb(style.color)
       if (color) font.color = { argb: color }
       if (Object.keys(font).length > 0) cell.font = font
@@ -283,7 +299,13 @@ export async function xlsxBufferFromWorkbook(
       if (bg) {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }
       }
-      if (style.align) cell.alignment = { horizontal: style.align }
+      if (style.align || style.valign || style.wrap) {
+        const alignment: Partial<ExcelJS.Alignment> = {}
+        if (style.align) alignment.horizontal = style.align
+        if (style.valign) alignment.vertical = style.valign
+        if (style.wrap) alignment.wrapText = true
+        cell.alignment = alignment
+      }
       if (style.numFmt) cell.numFmt = style.numFmt
       if (style.borders) {
         const border: Partial<ExcelJS.Borders> = {}
@@ -305,6 +327,13 @@ export async function xlsxBufferFromWorkbook(
     for (const [index, px] of Object.entries(sheet.rowHeights)) {
       ws.getRow(Number(index) + 1).height = pxToPt(px)
     }
+    for (const index of sheet.hiddenRows ?? []) {
+      const row = ws.getRow(index + 1)
+      row.hidden = true
+      // ExcelJS はセルも高さも無い行を書き出さないので、高さを付けて行ごと残す
+      if (!row.height) row.height = pxToPt(sheet.rowHeights[index] ?? DEFAULT_ROW_HEIGHT)
+    }
+    for (const col of sheet.hiddenCols ?? []) ws.getColumn(col + 1).hidden = true
     for (const merge of sheet.merges) {
       try {
         ws.mergeCells(merge)

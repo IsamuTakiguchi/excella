@@ -27,6 +27,22 @@ const CONFIG = {
   precisionRounding: 10,
 } as const
 
+/**
+ * モデルの値を HyperFormula に渡す形にする。HyperFormula は '007' や 'TRUE' のような
+ * 文字列を数値や真偽値に読み替えてしまう（社員番号の 007 が 7 になる）。
+ * そこで文字列には先頭に ' を付けて「文字列のまま」と伝える。数式（= で始まる）だけはそのまま。
+ */
+export function toRaw(value: RawCellContent): RawCellContent {
+  if (typeof value === 'string' && value !== '' && !value.startsWith('=')) return `'${value}`
+  return value
+}
+
+/** toRaw で付けた ' を外す（HyperFormula の入力内容をモデルへ戻すとき） */
+export function fromRaw<T extends RawCellContent>(value: T): T {
+  if (typeof value === 'string' && value.startsWith("'")) return value.slice(1) as T
+  return value
+}
+
 /** シートの疎な cells を HyperFormula 用の 2 次元配列にする */
 function sheetToArray(sheet: SheetModel): RawCellContent[][] {
   let maxRow = -1
@@ -40,7 +56,7 @@ function sheetToArray(sheet: SheetModel): RawCellContent[][] {
     for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64)
     col -= 1
     const row = Number(m[2]) - 1
-    const raw: RawCellContent = data.f !== undefined ? data.f : (data.v ?? null)
+    const raw: RawCellContent = data.f !== undefined ? data.f : toRaw(data.v ?? null)
     parsed.push({ row, col, raw })
     if (row > maxRow) maxRow = row
     if (col > maxCol) maxCol = col
@@ -101,18 +117,20 @@ export class Engine {
       col: addr.col,
     })
     if (raw === null || raw === undefined) return ''
-    return String(raw)
+    return String(fromRaw(raw))
   }
 
   setContent(sheetId: string, addr: Addr, raw: RawCellContent): void {
-    this.hf.setCellContents({ sheet: this.hfId(sheetId), row: addr.row, col: addr.col }, [[raw]])
+    this.hf.setCellContents({ sheet: this.hfId(sheetId), row: addr.row, col: addr.col }, [
+      [toRaw(raw)],
+    ])
   }
 
   /** 左上を起点に 2 次元配列をまとめて書き込む */
   setBlock(sheetId: string, topLeft: Addr, block: RawCellContent[][]): void {
     this.hf.setCellContents(
       { sheet: this.hfId(sheetId), row: topLeft.row, col: topLeft.col },
-      block,
+      block.map((row) => row.map(toRaw)),
     )
   }
 
@@ -149,16 +167,21 @@ export class Engine {
 
   /** シートの内容を丸ごと入れ替える（並べ替えなどで使う） */
   setSheetContent(sheetId: string, values: RawCellContent[][]): void {
-    this.hf.setSheetContent(this.hfId(sheetId), values)
+    this.hf.setSheetContent(
+      this.hfId(sheetId),
+      values.map((row) => row.map(toRaw)),
+    )
   }
 
   /** 範囲の入力内容（数式そのまま）を 2 次元で取り出す */
   getRangeSerialized(sheetId: string, range: Range): RawCellContent[][] {
     const sheet = this.hfId(sheetId)
-    return this.hf.getRangeSerialized({
-      start: { sheet, row: range.r0, col: range.c0 },
-      end: { sheet, row: range.r1, col: range.c1 },
-    })
+    return this.hf
+      .getRangeSerialized({
+        start: { sheet, row: range.r0, col: range.c0 },
+        end: { sheet, row: range.r1, col: range.c1 },
+      })
+      .map((row) => row.map(fromRaw))
   }
 
   /** 範囲の計算結果を 2 次元で取り出す */
@@ -173,7 +196,7 @@ export class Engine {
 
   /** シート全体の入力内容（保存時にモデルへ書き戻すのに使う） */
   getSheetSerialized(sheetId: string): RawCellContent[][] {
-    return this.hf.getSheetSerialized(this.hfId(sheetId))
+    return this.hf.getSheetSerialized(this.hfId(sheetId)).map((row) => row.map(fromRaw))
   }
 
   /** 数式セルの計算結果を A1 キーの Map にして返す（xlsx の result 埋め込み用） */

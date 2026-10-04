@@ -2,68 +2,124 @@ import { useEffect, useRef, useState } from 'react'
 import { colToLetter } from '@shared/a1'
 import { BORDER_PRESETS, BORDER_WEIGHTS } from '@shared/borders'
 import { AUTO_FUNCTIONS } from '@shared/dataTools'
-import type { BorderWeight } from '@shared/model'
+import { DEFAULT_FONT_NAME, FONTS, FONT_SIZES, stepFontSize } from '@shared/fonts'
+import { DEFAULT_FONT_PT, type BorderWeight, type VerticalAlign } from '@shared/model'
 import { NUMBER_FORMATS } from '@shared/numberFormat'
 import { COMPACT_RIBBON, NARROW_WIDTH } from '../device'
+import { fitColumnWidth, fitRowHeight, growRowsToFit } from '../grid/autofit'
 import { focusGrid } from '../grid/focus'
 import { MAX_ZOOM, MIN_ZOOM } from '../grid/geometry'
 import { emitMenu } from '../menuBus'
-import { useStore } from '../store/workbookStore'
+import { useStore, type PasteMode } from '../store/workbookStore'
 import { useMediaQuery } from '../useMediaQuery'
 import { Backstage } from './Backstage'
 import {
+  AlignBottomIcon,
   AlignCenterIcon,
   AlignLeftIcon,
+  AlignMiddleIcon,
   AlignRightIcon,
+  AlignTopIcon,
   BorderIcon,
+  CellFormatIcon,
+  CommaIcon,
   CopyIcon,
+  CurrencyIcon,
   CutIcon,
-  DeleteColIcon,
+  DecimalDecIcon,
+  DecimalIncIcon,
   DeleteRowIcon,
   EraserIcon,
   FillColorIcon,
   FontColorIcon,
+  FontGrowIcon,
+  FontShrinkIcon,
+  FormatPainterIcon,
   FreezeIcon,
-  InsertColIcon,
   InsertRowIcon,
   MergeIcon,
   PasteIcon,
+  PercentIcon,
   RedoIcon,
+  SearchIcon,
+  SigmaIcon,
   SortAscIcon,
   SortDescIcon,
   UndoIcon,
+  WrapIcon,
 } from './Icons'
 
-/** Excel の「標準の色」に合わせた文字色 */
-const TEXT_COLORS = ['#000000', '#C00000', '#ED7D31', '#FFC000', '#00B050', '#0070C0', '#7030A0']
-/** Excel でよく使われる薄い塗りつぶし色 */
-const FILL_COLORS = ['', '#FFF2CC', '#FCE4D6', '#DDEBF7', '#E2EFDA', '#EDEDED', '#F8CBAD']
+/** Excel の「標準の色」と白黒・灰色 */
+const TEXT_COLORS = [
+  '#000000',
+  '#595959',
+  '#808080',
+  '#BFBFBF',
+  '#FFFFFF',
+  '#C00000',
+  '#FF0000',
+  '#FFC000',
+  '#FFFF00',
+  '#92D050',
+  '#00B050',
+  '#00B0F0',
+  '#0070C0',
+  '#002060',
+  '#7030A0',
+]
+/** 塗りつぶし。先頭の空文字は「塗りつぶしなし」 */
+const FILL_COLORS = [
+  '',
+  '#F2F2F2',
+  '#D9D9D9',
+  '#FFF2CC',
+  '#FCE4D6',
+  '#DDEBF7',
+  '#E2EFDA',
+  '#EDEDED',
+  '#F8CBAD',
+  '#FFFF00',
+  '#92D050',
+  '#00B0F0',
+  '#FFC000',
+  '#C00000',
+  '#7030A0',
+]
 
 type TabKey = 'home' | 'insert' | 'formulas' | 'data' | 'view'
-type Group = { key: string; label: string; items: React.ReactNode }
+/** リボンの 1 グループ。rows は広い画面で上下 2 段に積む（Excel と同じ） */
+type Group = { key: string; label: string; rows: React.ReactNode[] }
 
 /** Excel のリボンと同じく、ボタンの下にグループ名を出す（広い画面のとき） */
-function GroupBox({ label, children }: { label: string; children: React.ReactNode }) {
+function GroupBox({ label, rows }: { label: string; rows: React.ReactNode[] }) {
   return (
     <div className="group">
-      <div className="items">{children}</div>
+      <div className={rows.length > 1 ? 'items stacked' : 'items'}>
+        {rows.map((row, i) => (
+          <div className="row" key={i}>
+            {row}
+          </div>
+        ))}
+      </div>
       <div className="group-label">{label}</div>
     </div>
   )
 }
 
 /**
- * 押すと下に開くボタン（狭い画面の色見本・罫線）。
- * 開いた位置は画面に対して固定する。リボンは横に流れるので、
- * その中に置くと切り取られて中身が見えない。
+ * 押すと下に開くボタン。開いた位置は画面に対して固定する。
+ * リボンは横に流れるので、その中に置くと切り取られて中身が見えない。
+ * icon を省くと ▾ だけのボタンになる（左のボタンと組んで分割ボタンにするとき）。
  */
 function PopoverButton({
   title,
   icon,
+  label,
   children,
 }: {
   title: string
-  icon: React.ReactNode
+  icon?: React.ReactNode
+  label?: string
   children: (close: () => void) => React.ReactNode
 }) {
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
@@ -90,8 +146,9 @@ function PopoverButton({
     <span className="color-palette" ref={ref}>
       <button
         title={title}
-        className="with-caret"
+        className={`with-caret${icon || label ? '' : ' caret-only'}${label ? ' text-button' : ''}`}
         aria-expanded={open}
+        aria-haspopup="menu"
         onClick={(e) => {
           if (open) {
             setAt(null)
@@ -99,10 +156,11 @@ function PopoverButton({
           }
           const r = e.currentTarget.getBoundingClientRect()
           // 右端からはみ出さないように寄せる
-          setAt({ left: Math.max(4, Math.min(r.left, window.innerWidth - 240)), top: r.bottom + 2 })
+          setAt({ left: Math.max(4, Math.min(r.left, window.innerWidth - 260)), top: r.bottom + 2 })
         }}
       >
         {icon}
+        {label ? <span>{label}</span> : null}
         <span className="caret">▾</span>
       </button>
       {at ? (
@@ -117,24 +175,64 @@ function PopoverButton({
   )
 }
 
+/** 色見本の格子と「その他の色」 */
 function Swatches({
   colors,
   onPick,
+  noneLabel,
 }: {
   colors: string[]
   onPick: (color: string) => void
+  noneLabel?: string
 }): React.JSX.Element {
   return (
-    <span className="swatch-grid">
-      {colors.map((color) => (
-        <button
-          key={color || 'none'}
-          className={`swatch${color ? '' : ' none'}`}
-          title={color || 'なし'}
-          style={color ? { background: color } : undefined}
-          onClick={() => onPick(color)}
-        />
-      ))}
+    <span className="swatch-panel">
+      <span className="swatch-grid">
+        {colors.map((color) => (
+          <button
+            key={color || 'none'}
+            className={`swatch${color ? '' : ' none'}`}
+            title={color || noneLabel || 'なし'}
+            style={color ? { background: color } : undefined}
+            onClick={() => onPick(color)}
+          />
+        ))}
+      </span>
+      <label className="swatch-more">
+        その他の色…
+        <input type="color" onChange={(e) => onPick(e.target.value.toUpperCase())} />
+      </label>
+    </span>
+  )
+}
+
+/** 文字だけのメニュー（貼り付け ▾・挿入 ▾ など） */
+function MenuList({
+  items,
+  close,
+}: {
+  items: Array<{ label: string; onSelect: () => void; disabled?: boolean } | 'separator'>
+  close: () => void
+}): React.JSX.Element {
+  return (
+    <span className="menu-list" role="menu">
+      {items.map((item, i) =>
+        item === 'separator' ? (
+          <hr key={`sep-${i}`} />
+        ) : (
+          <button
+            key={item.label}
+            role="menuitem"
+            disabled={item.disabled}
+            onClick={() => {
+              item.onSelect()
+              close()
+            }}
+          >
+            {item.label}
+          </button>
+        ),
+      )}
     </span>
   )
 }
@@ -168,7 +266,7 @@ function Toggle({
 
 /**
  * リボン。Excel と同じ「ファイル／ホーム／挿入／数式／データ／表示」のタブで切り替える。
- * 広い画面ではグループ名つきで横に並べ、狭い画面では折り返して詰める。
+ * 広い画面ではグループ名つきで横に並べ（ボタンは上下 2 段）、狭い画面では折り返して詰める。
  * 「ファイル」は内容の切り替えではなく、Excel と同じ全画面の Backstage を開く。
  */
 export function Toolbar(): React.JSX.Element {
@@ -180,6 +278,8 @@ export function Toolbar(): React.JSX.Element {
   const showGridlines = useStore((s) => s.showGridlines)
   const showFormulaBar = useStore((s) => s.showFormulaBar)
   const showFormulas = useStore((s) => s.showFormulas)
+  const hasClipboard = useStore((s) => s.clipboard !== null)
+  const painting = useStore((s) => s.formatPainter !== null)
   const style = useStore((s) => s.styleAt)(selection.anchor)
   void revision
 
@@ -194,7 +294,7 @@ export function Toolbar(): React.JSX.Element {
   const [tab, setTab] = useState<TabKey>('home')
   const [backstage, setBackstage] = useState(false)
 
-  // リボンが 1 段に収まらない画面では詰めて並べる（色と罫線はボタンから開く形に）
+  // リボンが 1 段に収まらない画面では詰めて並べる
   const compact = useMediaQuery(COMPACT_RIBBON)
   // スマホでは、長押しメニューやほかのタブにもある操作をホームから外し、表に高さを譲る
   const phone = useMediaQuery(`(max-width: ${NARROW_WIDTH}px)`)
@@ -210,15 +310,38 @@ export function Toolbar(): React.JSX.Element {
     store().applyStyle({ color: color === '#000000' ? undefined : color })
   }
   const applyFill = (color: string) => {
-    setFillColor(color)
+    if (color) setFillColor(color)
     store().applyStyle({ bg: color || undefined })
   }
   const applyBorder = (preset: (typeof BORDER_PRESETS)[number]['preset']) =>
     store().applyBorders(preset, { weight: borderWeight, color: borderColor })
+  const applyFontSize = (size: number) => {
+    store().applyStyle({ fontSize: size === DEFAULT_FONT_PT ? undefined : size })
+    // 折り返しのセルは、大きくした文字で行数が増えることがある
+    growRowsToFit(range.r0, range.r1)
+  }
+  const applyValign = (valign: VerticalAlign) =>
+    store().applyStyle({ valign: valign === 'bottom' ? undefined : valign })
+  const pasteAs = (mode: PasteMode) => {
+    if (mode === 'all') emitMenu('paste')
+    else store().paste(undefined, mode)
+  }
+
+  const insertSheet = () => {
+    const state = store()
+    const index = state.model.sheets.findIndex((s) => s.id === state.model.activeSheetId)
+    // Excel と同じく、開いているシートの前に入れる
+    state.addSheet(Math.max(0, index))
+  }
+
+  const currentFont = style?.fontName ?? DEFAULT_FONT_NAME
+  const currentSize = style?.fontSize ?? DEFAULT_FONT_PT
+  const currentValign = style?.valign ?? 'bottom'
+  const currentFormat = style?.numFmt ?? 'General'
 
   // --- ホーム -----------------------------------------------------------------
 
-  const undoItems = (
+  const undoRow = (
     <>
       <button title="元に戻す (Ctrl+Z)" disabled={!canUndo} onClick={() => store().undo()}>
         <UndoIcon />
@@ -229,21 +352,114 @@ export function Toolbar(): React.JSX.Element {
     </>
   )
 
-  const clipboardItems = (
-    <>
-      <button title="貼り付け (Ctrl+V)" onClick={() => emitMenu('paste')}>
+  const pasteButton = (
+    <span className="split">
+      <button title="貼り付け (Ctrl+V)" onClick={() => pasteAs('all')}>
         <PasteIcon />
       </button>
+      <PopoverButton title="貼り付けのオプション">
+        {(close) => (
+          <MenuList
+            close={close}
+            items={[
+              { label: '貼り付け (Ctrl+V)', onSelect: () => pasteAs('all') },
+              { label: '値', onSelect: () => pasteAs('values'), disabled: !hasClipboard },
+              { label: '数式', onSelect: () => pasteAs('formulas'), disabled: !hasClipboard },
+              { label: '書式設定', onSelect: () => pasteAs('formats'), disabled: !hasClipboard },
+              {
+                label: '行列を入れ替える',
+                onSelect: () => pasteAs('transpose'),
+                disabled: !hasClipboard,
+              },
+            ]}
+          />
+        )}
+      </PopoverButton>
+    </span>
+  )
+
+  const clipboardRow = (
+    <>
       <button title="切り取り (Ctrl+X)" onClick={() => emitMenu('cut')}>
         <CutIcon />
       </button>
       <button title="コピー (Ctrl+C)" onClick={() => emitMenu('copy')}>
         <CopyIcon />
       </button>
+      <button
+        title="書式のコピー/貼り付け（ダブルクリックで続けて塗る。Esc で終了）"
+        className={painting ? 'active' : ''}
+        onClick={() => {
+          if (store().formatPainter) store().cancelFormatPainter()
+          else store().startFormatPainter(false)
+        }}
+        onDoubleClick={() => store().startFormatPainter(true)}
+      >
+        <FormatPainterIcon />
+      </button>
     </>
   )
 
-  const fontItems = (
+  const fontSelects = (
+    <>
+      <select
+        className="font-name"
+        title="フォント"
+        value={currentFont}
+        onChange={(e) => {
+          const name = e.target.value
+          store().applyStyle({ fontName: name === DEFAULT_FONT_NAME ? undefined : name })
+          focusGrid()
+        }}
+      >
+        {FONTS.some((f) => f.name === currentFont) ? null : (
+          <option value={currentFont}>{currentFont}</option>
+        )}
+        {FONTS.map((f) => (
+          <option key={f.name} value={f.name}>
+            {f.name}
+          </option>
+        ))}
+      </select>
+      <select
+        className="font-size"
+        title="フォント サイズ"
+        value={currentSize}
+        onChange={(e) => {
+          applyFontSize(Number(e.target.value))
+          focusGrid()
+        }}
+      >
+        {FONT_SIZES.includes(currentSize) ? null : (
+          <option value={currentSize}>{currentSize}</option>
+        )}
+        {FONT_SIZES.map((size) => (
+          <option key={size} value={size}>
+            {size}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+
+  const fontGrowShrink = (
+    <>
+      <button
+        title="フォント サイズの拡大"
+        onClick={() => applyFontSize(stepFontSize(currentSize, 1))}
+      >
+        <FontGrowIcon />
+      </button>
+      <button
+        title="フォント サイズの縮小"
+        onClick={() => applyFontSize(stepFontSize(currentSize, -1))}
+      >
+        <FontShrinkIcon />
+      </button>
+    </>
+  )
+
+  const styleButtons = (
     <>
       <button
         title="太字 (Ctrl+B)"
@@ -266,121 +482,14 @@ export function Toolbar(): React.JSX.Element {
       >
         <u>U</u>
       </button>
-      <span className="vsep" />
-      {compact ? (
-        <>
-          <PopoverButton title="文字色" icon={<FontColorIcon color={textColor} />}>
-            {(close) => (
-              <Swatches
-                colors={TEXT_COLORS}
-                onPick={(c) => {
-                  applyText(c)
-                  close()
-                }}
-              />
-            )}
-          </PopoverButton>
-          <PopoverButton title="塗りつぶし" icon={<FillColorIcon color={fillColor || '#ffffff'} />}>
-            {(close) => (
-              <Swatches
-                colors={FILL_COLORS}
-                onPick={(c) => {
-                  applyFill(c)
-                  close()
-                }}
-              />
-            )}
-          </PopoverButton>
-        </>
-      ) : (
-        <>
-          <button
-            title={`文字色 ${textColor}`}
-            onClick={() => store().applyStyle({ color: textColor })}
-          >
-            <FontColorIcon color={textColor} />
-          </button>
-          <span className="swatches">
-            {TEXT_COLORS.map((color) => (
-              <button
-                key={color}
-                className="swatch"
-                title={`文字色 ${color}`}
-                style={{ background: color }}
-                onClick={() => applyText(color)}
-              />
-            ))}
-          </span>
-          <span className="vsep" />
-          <button
-            title={`塗りつぶし ${fillColor}`}
-            onClick={() => store().applyStyle({ bg: fillColor || undefined })}
-          >
-            <FillColorIcon color={fillColor || '#ffffff'} />
-          </button>
-          <span className="swatches">
-            {FILL_COLORS.map((color) => (
-              <button
-                key={color || 'none'}
-                className={`swatch${color ? '' : ' none'}`}
-                title={color ? `塗りつぶし ${color}` : '塗りつぶしなし'}
-                style={color ? { background: color } : undefined}
-                onClick={() => applyFill(color)}
-              />
-            ))}
-          </span>
-        </>
-      )}
-    </>
-  )
-
-  const alignItems = (
-    <>
       <button
-        title="左揃え"
-        className={style?.align === 'left' ? 'active' : ''}
-        onClick={() => store().applyStyle({ align: 'left' })}
+        title="取り消し線"
+        className={`glyph${style?.strike ? ' active' : ''}`}
+        onClick={() => store().applyStyle({ strike: true }, true)}
       >
-        <AlignLeftIcon />
-      </button>
-      <button
-        title="中央揃え"
-        className={style?.align === 'center' ? 'active' : ''}
-        onClick={() => store().applyStyle({ align: 'center' })}
-      >
-        <AlignCenterIcon />
-      </button>
-      <button
-        title="右揃え"
-        className={style?.align === 'right' ? 'active' : ''}
-        onClick={() => store().applyStyle({ align: 'right' })}
-      >
-        <AlignRightIcon />
-      </button>
-      <span className="vsep" />
-      <button title="セルを結合／解除" onClick={() => store().toggleMerge()}>
-        <MergeIcon />
+        <s>S</s>
       </button>
     </>
-  )
-
-  const numberItems = (
-    <select
-      title="表示形式"
-      value={style?.numFmt ?? 'General'}
-      onChange={(e) => {
-        store().applyStyle({
-          numFmt: e.target.value === 'General' ? undefined : e.target.value,
-        })
-        focusGrid()
-      }}
-    >
-      {NUMBER_FORMATS.map((fmt) => (
-        <option key={fmt.code} value={fmt.code}>
-          {fmt.label}
-        </option>
-      ))}
-    </select>
   )
 
   const borderControls = (
@@ -406,7 +515,7 @@ export function Toolbar(): React.JSX.Element {
     </>
   )
 
-  const borderItems = compact ? (
+  const borderButton = (
     <PopoverButton title="罫線" icon={<BorderIcon kind="all" />}>
       {(close) => (
         <span className="border-popover">
@@ -428,56 +537,307 @@ export function Toolbar(): React.JSX.Element {
         </span>
       )}
     </PopoverButton>
-  ) : (
+  )
+
+  // 塗りつぶしと文字色は Excel と同じ分割ボタン（左で最後の色、▾ で色を選ぶ）
+  const colorButtons = (
     <>
-      {BORDER_PRESETS.map((item) => (
-        <button key={item.preset} title={item.label} onClick={() => applyBorder(item.preset)}>
-          <BorderIcon kind={item.preset} />
+      <span className="split">
+        <button
+          title={`塗りつぶしの色 ${fillColor}`}
+          onClick={() => store().applyStyle({ bg: fillColor })}
+        >
+          <FillColorIcon color={fillColor} />
         </button>
-      ))}
-      {borderControls}
+        <PopoverButton title="塗りつぶしの色を選ぶ">
+          {(close) => (
+            <Swatches
+              colors={FILL_COLORS}
+              noneLabel="塗りつぶしなし"
+              onPick={(c) => {
+                applyFill(c)
+                close()
+              }}
+            />
+          )}
+        </PopoverButton>
+      </span>
+      <span className="split">
+        <button
+          title={`フォントの色 ${textColor}`}
+          onClick={() => store().applyStyle({ color: textColor })}
+        >
+          <FontColorIcon color={textColor} />
+        </button>
+        <PopoverButton title="フォントの色を選ぶ">
+          {(close) => (
+            <Swatches
+              colors={TEXT_COLORS}
+              onPick={(c) => {
+                applyText(c)
+                close()
+              }}
+            />
+          )}
+        </PopoverButton>
+      </span>
     </>
   )
 
-  const cellItems = (
+  const valignButtons = (
     <>
-      <button title="行を挿入" onClick={() => store().insertRows(range.r0, rowSpan)}>
-        <InsertRowIcon />
+      <button
+        title="上揃え"
+        className={currentValign === 'top' ? 'active' : ''}
+        onClick={() => applyValign('top')}
+      >
+        <AlignTopIcon />
       </button>
-      <button title="行を削除" onClick={() => store().deleteRows(range.r0, rowSpan)}>
-        <DeleteRowIcon />
+      <button
+        title="上下中央揃え"
+        className={currentValign === 'middle' ? 'active' : ''}
+        onClick={() => applyValign('middle')}
+      >
+        <AlignMiddleIcon />
       </button>
-      <button title="列を挿入" onClick={() => store().insertColumns(range.c0, colSpan)}>
-        <InsertColIcon />
-      </button>
-      <button title="列を削除" onClick={() => store().deleteColumns(range.c0, colSpan)}>
-        <DeleteColIcon />
+      <button
+        title="下揃え"
+        className={currentValign === 'bottom' ? 'active' : ''}
+        onClick={() => applyValign('bottom')}
+      >
+        <AlignBottomIcon />
       </button>
     </>
+  )
+
+  const wrapButton = (
+    <button
+      title="折り返して全体を表示する"
+      className={style?.wrap ? 'active' : ''}
+      onClick={() => {
+        const on = !style?.wrap
+        store().applyStyle({ wrap: on || undefined })
+        if (on) growRowsToFit(range.r0, range.r1)
+      }}
+    >
+      <WrapIcon />
+    </button>
+  )
+
+  const alignButtons = (
+    <>
+      <button
+        title="左揃え"
+        className={style?.align === 'left' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'left' })}
+      >
+        <AlignLeftIcon />
+      </button>
+      <button
+        title="中央揃え"
+        className={style?.align === 'center' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'center' })}
+      >
+        <AlignCenterIcon />
+      </button>
+      <button
+        title="右揃え"
+        className={style?.align === 'right' ? 'active' : ''}
+        onClick={() => store().applyStyle({ align: 'right' })}
+      >
+        <AlignRightIcon />
+      </button>
+    </>
+  )
+
+  const mergeButton = (
+    <button title="セルを結合して中央揃え／解除" onClick={() => store().toggleMerge()}>
+      <MergeIcon />
+    </button>
+  )
+
+  const known = NUMBER_FORMATS.some((f) => f.code === currentFormat)
+  const numberSelect = (
+    <select
+      className="number-format"
+      title="表示形式"
+      value={currentFormat}
+      onChange={(e) => {
+        store().applyStyle({
+          numFmt: e.target.value === 'General' ? undefined : e.target.value,
+        })
+        focusGrid()
+      }}
+    >
+      {known ? null : <option value={currentFormat}>ユーザー定義（{currentFormat}）</option>}
+      {NUMBER_FORMATS.map((fmt) => (
+        <option key={fmt.code} value={fmt.code}>
+          {fmt.label}
+        </option>
+      ))}
+    </select>
+  )
+
+  const numberButtons = (
+    <>
+      <button title="通貨表示形式" onClick={() => store().applyStyle({ numFmt: '¥#,##0' })}>
+        <CurrencyIcon />
+      </button>
+      <button title="パーセント スタイル" onClick={() => store().applyStyle({ numFmt: '0%' })}>
+        <PercentIcon />
+      </button>
+      <button title="桁区切りスタイル" onClick={() => store().applyStyle({ numFmt: '#,##0' })}>
+        <CommaIcon />
+      </button>
+      <button title="小数点以下の表示桁数を増やす" onClick={() => store().adjustDecimals(1)}>
+        <DecimalIncIcon />
+      </button>
+      <button title="小数点以下の表示桁数を減らす" onClick={() => store().adjustDecimals(-1)}>
+        <DecimalDecIcon />
+      </button>
+    </>
+  )
+
+  const insertMenu = (
+    <PopoverButton title="セル・行・列・シートの挿入" icon={<InsertRowIcon />} label="挿入">
+      {(close) => (
+        <MenuList
+          close={close}
+          items={[
+            {
+              label: `${rowSpan} 行を挿入`,
+              onSelect: () => store().insertRows(range.r0, rowSpan),
+            },
+            {
+              label: `${colSpan} 列を挿入`,
+              onSelect: () => store().insertColumns(range.c0, colSpan),
+            },
+            'separator',
+            { label: 'シートの挿入 (Shift+F11)', onSelect: () => insertSheet() },
+          ]}
+        />
+      )}
+    </PopoverButton>
+  )
+
+  const deleteMenu = (
+    <PopoverButton title="セル・行・列・シートの削除" icon={<DeleteRowIcon />} label="削除">
+      {(close) => (
+        <MenuList
+          close={close}
+          items={[
+            {
+              label: `${rowSpan} 行を削除`,
+              onSelect: () => store().deleteRows(range.r0, rowSpan),
+            },
+            {
+              label: `${colSpan} 列を削除`,
+              onSelect: () => store().deleteColumns(range.c0, colSpan),
+            },
+            'separator',
+            {
+              label: 'シートの削除',
+              onSelect: () => {
+                const state = store()
+                const name = state.activeSheet().name
+                if (confirm(`「${name}」を削除しますか？`))
+                  state.removeSheet(state.model.activeSheetId)
+              },
+            },
+          ]}
+        />
+      )}
+    </PopoverButton>
+  )
+
+  const formatMenu = (
+    <PopoverButton title="行の高さ・列の幅・表示/非表示" icon={<CellFormatIcon />} label="書式">
+      {(close) => (
+        <MenuList
+          close={close}
+          items={[
+            {
+              label: '行の高さの自動調整',
+              onSelect: () => {
+                const heights: Record<number, number> = {}
+                for (let r = range.r0; r <= range.r1; r++) heights[r] = fitRowHeight(r)
+                store().setRowHeights(heights)
+              },
+            },
+            {
+              label: '列の幅の自動調整',
+              onSelect: () => {
+                for (let c = range.c0; c <= range.c1; c++) store().setColWidth(c, fitColumnWidth(c))
+              },
+            },
+            'separator',
+            { label: '行を表示しない', onSelect: () => store().hideRows(range.r0, range.r1) },
+            { label: '列を表示しない', onSelect: () => store().hideCols(range.c0, range.c1) },
+            { label: '行の再表示', onSelect: () => store().unhideRows(range.r0, range.r1) },
+            { label: '列の再表示', onSelect: () => store().unhideCols(range.c0, range.c1) },
+          ]}
+        />
+      )}
+    </PopoverButton>
+  )
+
+  const autoSumButton = (
+    <span className="split">
+      <button
+        title="オート SUM (Alt+=)。上（または左）の数値をまとめて合計"
+        onClick={() => {
+          store().autoSum('SUM')
+          focusGrid()
+        }}
+      >
+        <SigmaIcon />
+      </button>
+      <PopoverButton title="ほかの集計">
+        {(close) => (
+          <MenuList
+            close={close}
+            items={AUTO_FUNCTIONS.map(({ fn, label }) => ({
+              label: `${label}（${fn}）`,
+              onSelect: () => store().autoSum(fn),
+            }))}
+          />
+        )}
+      </PopoverButton>
+    </span>
   )
 
   // Excel の「クリア ▾」と同じく、押すと種類を選べる
-  const editItems = (
+  const clearMenu = (
     <PopoverButton title="クリア" icon={<EraserIcon />}>
       {(close) => (
-        <span className="menu-list">
-          <button
-            onClick={() => {
-              store().clearSelection()
-              close()
-            }}
-          >
-            数式と値のクリア（Delete）
-          </button>
-          <button
-            onClick={() => {
-              store().clearStyles()
-              close()
-            }}
-          >
-            書式のクリア
-          </button>
-        </span>
+        <MenuList
+          close={close}
+          items={[
+            {
+              label: 'すべてクリア',
+              onSelect: () => {
+                store().clearSelection()
+                store().clearStyles()
+              },
+            },
+            { label: '書式のクリア', onSelect: () => store().clearStyles() },
+            { label: '数式と値のクリア (Delete)', onSelect: () => store().clearSelection() },
+          ]}
+        />
+      )}
+    </PopoverButton>
+  )
+
+  const findMenu = (
+    <PopoverButton title="検索と選択" icon={<SearchIcon />}>
+      {(close) => (
+        <MenuList
+          close={close}
+          items={[
+            { label: '検索 (Ctrl+F)', onSelect: () => emitMenu('find') },
+            { label: '置換 (Ctrl+H)', onSelect: () => emitMenu('replace') },
+          ]}
+        />
       )}
     </PopoverButton>
   )
@@ -496,15 +856,7 @@ export function Toolbar(): React.JSX.Element {
   )
 
   const insertSheetItems = (
-    <button
-      className="text-button"
-      title="新しいシート (Shift+F11)"
-      onClick={() => {
-        const state = store()
-        const index = state.model.sheets.findIndex((s) => s.id === state.model.activeSheetId)
-        state.addSheet(Math.max(0, index))
-      }}
-    >
+    <button className="text-button" title="新しいシート (Shift+F11)" onClick={insertSheet}>
       新しいシート
     </button>
   )
@@ -650,57 +1002,130 @@ export function Toolbar(): React.JSX.Element {
     </button>
   )
 
+  // スマホのホームはよく使う書式だけ。ほかは長押しメニューと各タブにある
+  const homeGroups: Group[] = phone
+    ? [
+        { key: 'undo', label: '元に戻す', rows: [undoRow] },
+        {
+          key: 'font',
+          label: 'フォント',
+          rows: [
+            <>
+              {styleButtons}
+              {colorButtons}
+              {borderButton}
+            </>,
+          ],
+        },
+        {
+          key: 'align',
+          label: '配置',
+          rows: [
+            <>
+              {alignButtons}
+              {wrapButton}
+              {mergeButton}
+            </>,
+          ],
+        },
+        { key: 'number', label: '数値', rows: [numberSelect] },
+      ]
+    : [
+        { key: 'undo', label: '元に戻す', rows: [undoRow] },
+        { key: 'clipboard', label: 'クリップボード', rows: [pasteButton, clipboardRow] },
+        {
+          key: 'font',
+          label: 'フォント',
+          rows: [
+            <>
+              {fontSelects}
+              {fontGrowShrink}
+            </>,
+            <>
+              {styleButtons}
+              <span className="vsep" />
+              {borderButton}
+              <span className="vsep" />
+              {colorButtons}
+            </>,
+          ],
+        },
+        {
+          key: 'align',
+          label: '配置',
+          rows: [
+            <>
+              {valignButtons}
+              <span className="vsep" />
+              {wrapButton}
+            </>,
+            <>
+              {alignButtons}
+              <span className="vsep" />
+              {mergeButton}
+            </>,
+          ],
+        },
+        { key: 'number', label: '数値', rows: [numberSelect, numberButtons] },
+        {
+          key: 'cells',
+          label: 'セル',
+          rows: [
+            <>
+              {insertMenu}
+              {deleteMenu}
+            </>,
+            formatMenu,
+          ],
+        },
+        {
+          key: 'edit',
+          label: '編集',
+          rows: [
+            <>
+              {autoSumButton}
+              {clearMenu}
+            </>,
+            findMenu,
+          ],
+        },
+      ]
+
   const tabs: Array<{ key: TabKey; label: string; groups: Group[] }> = [
-    {
-      key: 'home',
-      label: 'ホーム',
-      groups: [
-        { key: 'undo', label: '元に戻す', items: undoItems },
-        ...(phone ? [] : [{ key: 'clipboard', label: 'クリップボード', items: clipboardItems }]),
-        { key: 'font', label: 'フォント', items: fontItems },
-        { key: 'align', label: '配置', items: alignItems },
-        { key: 'number', label: '数値', items: numberItems },
-        { key: 'border', label: '罫線', items: borderItems },
-        ...(phone
-          ? []
-          : [
-              { key: 'cells', label: 'セル', items: cellItems },
-              { key: 'edit', label: '編集', items: editItems },
-            ]),
-      ],
-    },
+    { key: 'home', label: 'ホーム', groups: homeGroups },
     {
       key: 'insert',
       label: '挿入',
       groups: [
-        { key: 'cells', label: 'セル', items: insertCellItems },
-        { key: 'sheet', label: 'シート', items: insertSheetItems },
-        { key: 'now', label: '日付と時刻', items: insertNowItems },
+        { key: 'cells', label: 'セル', rows: [insertCellItems] },
+        { key: 'sheet', label: 'シート', rows: [insertSheetItems] },
+        { key: 'now', label: '日付と時刻', rows: [insertNowItems] },
       ],
     },
     {
       key: 'formulas',
       label: '数式',
       groups: [
-        { key: 'functions', label: '関数ライブラリ', items: functionItems },
-        { key: 'audit', label: 'ワークシート分析', items: formulaViewItems },
+        { key: 'functions', label: '関数ライブラリ', rows: [functionItems] },
+        { key: 'audit', label: 'ワークシート分析', rows: [formulaViewItems] },
       ],
     },
     {
       key: 'data',
       label: 'データ',
       groups: [
-        { key: 'sort', label: '並べ替え', items: sortItems },
-        { key: 'tools', label: 'データツール', items: dataToolItems },
+        { key: 'sort', label: '並べ替え', rows: [sortItems] },
+        { key: 'tools', label: 'データツール', rows: [dataToolItems] },
+        { key: 'find', label: '検索', rows: [findMenu] },
       ],
     },
     {
       key: 'view',
       label: '表示',
       groups: [
-        { key: 'show', label: '表示', items: showItems },
-        { key: 'zoom', label: 'ズーム', items: zoomItems },
-        { key: 'window', label: 'ウィンドウ', items: windowItems },
+        { key: 'show', label: '表示', rows: [showItems] },
+        { key: 'zoom', label: 'ズーム', rows: [zoomItems] },
+        { key: 'window', label: 'ウィンドウ', rows: [windowItems] },
       ],
     },
   ]
@@ -743,16 +1168,18 @@ export function Toolbar(): React.JSX.Element {
           {current.groups.map((group, index) => (
             <span className="section" key={group.key} title={group.label}>
               {index > 0 ? <span className="vsep" /> : null}
-              {group.items}
+              {group.rows.map((row, i) => (
+                <span className="section" key={i}>
+                  {row}
+                </span>
+              ))}
             </span>
           ))}
         </div>
       ) : (
         <div className="ribbon-body">
           {current.groups.map((group) => (
-            <GroupBox key={group.key} label={group.label}>
-              {group.items}
-            </GroupBox>
+            <GroupBox key={group.key} label={group.label} rows={group.rows} />
           ))}
         </div>
       )}

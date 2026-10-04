@@ -174,3 +174,44 @@ describe('シート見出しの往復', () => {
     expect(loaded.activeSheetId).toBe(loaded.sheets[1].id)
   })
 })
+
+describe('フォント・配置・文字列の往復', () => {
+  it('フォント名・取り消し線・上下の配置・折り返しが保たれる', async () => {
+    const sheet = createSheet('Sheet1')
+    sheet.cells = { A1: { v: '見出し' }, B1: { v: '長い文章' } }
+    sheet.styles = {
+      A1: { fontName: 'ＭＳ 明朝', strike: true, valign: 'top' },
+      B1: { wrap: true, valign: 'middle', align: 'center' },
+    }
+    const model: WorkbookModel = { version: 1, sheets: [sheet], activeSheetId: sheet.id }
+    const loaded = await workbookFromXlsxBuffer(await xlsxBufferFromWorkbook(model))
+    expect(loaded.sheets[0].styles['A1']).toEqual({
+      fontName: 'ＭＳ 明朝',
+      strike: true,
+      valign: 'top',
+    })
+    expect(loaded.sheets[0].styles['B1']).toEqual({ wrap: true, valign: 'middle', align: 'center' })
+  })
+
+  it('数字だけの文字列（007 など）は文字列のまま往復する', async () => {
+    const sheet = createSheet('Sheet1')
+    sheet.cells = { A1: { v: '007' }, A2: { v: 7 } }
+    const model: WorkbookModel = { version: 1, sheets: [sheet], activeSheetId: sheet.id }
+    const loaded = await workbookFromXlsxBuffer(await xlsxBufferFromWorkbook(model))
+    expect(loaded.sheets[0].cells['A1']).toEqual({ v: '007' })
+    expect(loaded.sheets[0].cells['A2']).toEqual({ v: 7 })
+  })
+})
+
+describe('行・列の非表示の往復', () => {
+  it('非表示の行と列が保たれる（値の無い行も）', async () => {
+    const sheet = createSheet('Sheet1')
+    sheet.cells = { A1: { v: 1 }, A3: { v: 3 } }
+    sheet.hiddenRows = [1, 5]
+    sheet.hiddenCols = [2]
+    const model: WorkbookModel = { version: 1, sheets: [sheet], activeSheetId: sheet.id }
+    const loaded = await workbookFromXlsxBuffer(await xlsxBufferFromWorkbook(model))
+    expect(loaded.sheets[0].hiddenRows).toEqual([1, 5])
+    expect(loaded.sheets[0].hiddenCols).toEqual([2])
+  })
+})

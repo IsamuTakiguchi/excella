@@ -16,6 +16,8 @@ export type MenuAction =
   | 'select-all'
   | 'toggle-merge'
   | 'toggle-freeze'
+  | 'find'
+  | 'replace'
 
 export type OpenResult = {
   path: string

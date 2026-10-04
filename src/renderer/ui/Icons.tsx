@@ -249,3 +249,165 @@ export function EraserIcon(p: IconProps): React.JSX.Element {
     </svg>
   )
 }
+
+/** 文字だけのアイコン（%・¥ など）。線画と同じ 16px の枠にそろえる */
+function GlyphIcon({
+  text,
+  size = 11,
+  weight = 700,
+  ...p
+}: IconProps & { text: string; size?: number; weight?: number }): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <text
+        x="8"
+        y="12"
+        textAnchor="middle"
+        fontSize={size}
+        fontWeight={weight}
+        fill="currentColor"
+        stroke="none"
+      >
+        {text}
+      </text>
+    </svg>
+  )
+}
+
+export function CurrencyIcon(p: IconProps): React.JSX.Element {
+  return <GlyphIcon text="¥" size={12} {...p} />
+}
+
+export function PercentIcon(p: IconProps): React.JSX.Element {
+  return <GlyphIcon text="%" size={12} {...p} />
+}
+
+/** 桁区切りスタイル */
+export function CommaIcon(p: IconProps): React.JSX.Element {
+  return <GlyphIcon text="000" size={7.5} {...p} />
+}
+
+/** 小数点以下の表示桁数を増やす（.0 → .00） */
+export function DecimalIncIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <text x="1" y="7" fontSize="6.5" fontWeight="700" fill="currentColor" stroke="none">
+        .0
+      </text>
+      <text x="4" y="15" fontSize="6.5" fontWeight="700" fill="currentColor" stroke="none">
+        .00
+      </text>
+      <path d="M12 3h-4m1.5-1.5L8 3l1.5 1.5" strokeWidth="1" />
+    </svg>
+  )
+}
+
+/** 小数点以下の表示桁数を減らす（.00 → .0） */
+export function DecimalDecIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <text x="0" y="7" fontSize="6.5" fontWeight="700" fill="currentColor" stroke="none">
+        .00
+      </text>
+      <text x="6" y="15" fontSize="6.5" fontWeight="700" fill="currentColor" stroke="none">
+        .0
+      </text>
+      <path d="M11 11h4m-1.5-1.5L15 11l-1.5 1.5" strokeWidth="1" />
+    </svg>
+  )
+}
+
+/** フォントサイズの拡大 */
+export function FontGrowIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <text x="1" y="14" fontSize="13" fontWeight="700" fill="currentColor" stroke="none">
+        A
+      </text>
+      <path d="m11 5 2-2.5L15 5" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+/** フォントサイズの縮小 */
+export function FontShrinkIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <text x="1.5" y="14" fontSize="10" fontWeight="700" fill="currentColor" stroke="none">
+        A
+      </text>
+      <path d="m10.5 2.5 2 2.5 2-2.5" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+export function AlignTopIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="M2 2.5h12M8 13V6m-2.5 2.5L8 6l2.5 2.5" />
+    </svg>
+  )
+}
+
+export function AlignMiddleIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="M2 8h12M8 1.5V5M6.5 3.5 8 5l1.5-1.5M8 14.5V11m-1.5 1.5L8 11l1.5 1.5" />
+    </svg>
+  )
+}
+
+export function AlignBottomIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="M2 13.5h12M8 3v7m-2.5-2.5L8 10l2.5-2.5" />
+    </svg>
+  )
+}
+
+/** 折り返して全体を表示する */
+export function WrapIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="M2 3.5h12M2 8h9.5a2 2 0 0 1 0 4H8m1.5-1.5L8 12l1.5 1.5M2 12.5h3.5" />
+    </svg>
+  )
+}
+
+/** 書式のコピー／貼り付け（刷毛） */
+export function FormatPainterIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <rect x="2" y="2" width="10" height="4" rx="1" />
+      <path d="M12 4h2v4H8v2" />
+      <path d="M7 10h2v4.5H7z" />
+    </svg>
+  )
+}
+
+export function SearchIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m10.5 10.5 3.5 3.5" />
+    </svg>
+  )
+}
+
+export function SigmaIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <path d="M12.5 3.5v-1h-9L8 8l-4.5 5.5h9v-1" />
+    </svg>
+  )
+}
+
+/** 行・列の書式（高さや幅、非表示） */
+export function CellFormatIcon(p: IconProps): React.JSX.Element {
+  return (
+    <svg {...base} {...p}>
+      <rect x="2" y="2" width="12" height="12" rx="1" />
+      <path d="M2 6.5h12M6.5 2v12" />
+    </svg>
+  )
+}

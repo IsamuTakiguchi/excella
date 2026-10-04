@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { Addr } from '@shared/a1'
-import { isFormula } from '@shared/formulaRefs'
+import { cycleAbsolute, isFormula } from '@shared/formulaRefs'
 import { pointingText, useStore, type Editing } from '../store/workbookStore'
 import { isTouchDevice } from '../device'
 
@@ -83,8 +83,38 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
     }
     if (!editing) return // 編集していないときの移動キーは親が処理する
 
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
-      commit({ dRow: 1, dCol: 0 })
+    // Alt+Enter はセルの中で改行する（Excel と同じ）。確定すると折り返しの書式になる
+    if (e.key === 'Enter' && e.altKey) {
+      const el = ref.current
+      if (el) {
+        el.setRangeText('\n', el.selectionStart, el.selectionEnd, 'end')
+        store().updateEdit(el.value)
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    // Enter で下へ、Shift+Enter で上へ確定
+    if (e.key === 'Enter') {
+      commit({ dRow: e.shiftKey ? -1 : 1, dCol: 0 })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    // F4：キャレットの位置の参照を A1 → $A$1 → A$1 → $A1 と切り替える
+    if (e.key === 'F4' && isFormula(editing.text)) {
+      const el = ref.current
+      const pointed = useStore.getState().pointing
+      // 参照選択中は、差し込んだ参照をそのまま文字にしてから切り替える
+      const current = pointed ? pointingText(pointed) : null
+      const text = current ? current.text : (el?.value ?? editing.text)
+      const caret = current ? current.caret : (el?.selectionStart ?? text.length)
+      const next = cycleAbsolute(text, caret)
+      if (next && el) {
+        el.value = next.text
+        el.setSelectionRange(next.caret, next.caret)
+        store().updateEdit(next.text)
+      }
       e.preventDefault()
       e.stopPropagation()
       return

@@ -28,6 +28,8 @@ import { parseCsv, stringifyCsv } from '@shared/csv'
 import {
   createSheet,
   createWorkbook,
+  DEFAULT_ROW_HEIGHT,
+  fontPx,
   newSheetId,
   isEmptyBorders,
   isEmptyStyle,
@@ -38,7 +40,15 @@ import {
   type WorkbookModel,
 } from '@shared/model'
 import { applyPreset, positionIn, type BorderPreset } from '@shared/borders'
-import { formatCellValue, isDateFormat, timeSerial, todaySerial } from '@shared/numberFormat'
+import {
+  adjustDecimals as adjustDecimalsOf,
+  formatCell,
+  isDateFormat,
+  isTextFormat,
+  timeSerial,
+  todaySerial,
+} from '@shared/numberFormat'
+import { parseTypedInput } from '@shared/inputParse'
 import {
   autoSumTargets,
   detectAutoSumRange,
@@ -48,9 +58,11 @@ import {
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
 import { canInsertRef } from '@shared/formulaRefs'
+import { matchesText, replaceText, searchOrder, type SearchOptions } from '@shared/search'
 import { copySheetName, moveTargetIndex, nearestVisibleIndex, sheetNameError } from '@shared/sheets'
 import { defaultZoom } from '../device'
 import { clampZoom } from '../grid/geometry'
+import { rowHeightFor } from '../grid/textLayout'
 import { bridge } from '../bridge'
 import { Engine, type DisplayValue } from '../engine/hf'
 
@@ -59,6 +71,8 @@ const UNDO_LIMIT = 50
 export type ClipboardBlock = {
   /** 入力内容（数式は '=' 付き） */
   cells: Array<Array<CellData | null>>
+  /** コピーした時点の計算結果（「値の貼り付け」用） */
+  values: Array<Array<DisplayValue>>
   styles: Array<Array<CellStyle | undefined>>
   rows: number
   cols: number
@@ -68,6 +82,25 @@ export type ClipboardBlock = {
   /** OS クリップボードへ書き出した TSV。外部由来かの判定に使う */
   tsv: string
 }
+
+/** 形式を選択して貼り付け（Excel の「貼り付け ▾」） */
+export type PasteMode = 'all' | 'values' | 'formulas' | 'formats' | 'transpose'
+
+/** 検索と置換の条件 */
+export type FindOptions = SearchOptions & {
+  /** シートだけか、ブック全体か */
+  scope: 'sheet' | 'book'
+  /** 表示されている値で探すか、数式（入力内容）で探すか */
+  lookIn: 'values' | 'formulas'
+}
+
+/** 書式のコピー／貼り付け（刷毛）で写し取った書式。sticky はダブルクリックで連続して塗るとき */
+export type FormatPainter = {
+  styles: Array<Array<CellStyle | undefined>>
+  rows: number
+  cols: number
+  sticky: boolean
+} | null
 
 export type Editing = {
   addr: Addr
@@ -130,6 +163,8 @@ type State = {
    */
   zoom: number
   clipboard: ClipboardBlock | null
+  /** 書式のコピー中だけ非 null。次に選んだ範囲へ書式を塗る */
+  formatPainter: FormatPainter
   filePath: string | null
   fileName: string
   dirty: boolean
@@ -143,6 +178,8 @@ type Actions = {
   selectionRange(): Range
   displayValue(addr: Addr): DisplayValue
   displayText(addr: Addr): string
+  /** 表示形式の [Red] などで決まる文字色 */
+  displayColor(addr: Addr): string | undefined
   inputText(addr: Addr): string
   styleAt(addr: Addr): CellStyle | undefined
 
@@ -190,6 +227,15 @@ type Actions = {
   /** 選択範囲の書式だけを消す（内容は残す） */
   clearStyles(): void
   applyStyle(patch: CellStyle, toggle?: boolean): void
+  /** 小数点以下の表示桁数を増やす（1）／減らす（-1） */
+  adjustDecimals(delta: 1 | -1): void
+  /** 選択範囲の書式を写し取る。sticky なら Esc まで何度でも塗れる */
+  startFormatPainter(sticky: boolean): void
+  /** 写し取った書式を range に塗る（1 セルなら写した大きさで） */
+  applyFormatPainter(range: Range): void
+  cancelFormatPainter(): void
+  /** 行の高さをまとめて変える。record=false は直前の操作と同じ undo にまとめるとき */
+  setRowHeights(heights: Record<number, number>, record?: boolean): void
   /** 選択範囲に罫線のプリセットを適用する */
   applyBorders(preset: BorderPreset, side: BorderSide): void
   /** record=false はドラッグ中の連続更新用（undo 履歴を積まない） */
@@ -234,7 +280,23 @@ type Actions = {
   activateAdjacentSheet(delta: number): void
 
   copy(cut: boolean): Promise<void>
-  paste(externalText?: string): void
+  /** 貼り付け。externalText は OS のクリップボードの文字列、mode は形式を選択して貼り付け */
+  paste(externalText?: string, mode?: PasteMode): void
+  /** 下方向／右方向へコピー（Ctrl+D / Ctrl+R）。1 セルなら上（左）のセルから */
+  fillDirection(direction: 'down' | 'right'): void
+
+  /** 行・列の非表示と再表示（範囲の中の非表示を戻す） */
+  hideRows(r0: number, r1: number): void
+  unhideRows(r0: number, r1: number): void
+  hideCols(c0: number, c1: number): void
+  unhideCols(c0: number, c1: number): void
+
+  /** 次（backwards なら前）に一致するセルを選ぶ。見つからなければ false */
+  find(query: string, options: FindOptions, backwards?: boolean): boolean
+  /** アクティブセルが一致していれば置き換え、次の一致へ進む */
+  replaceNext(query: string, replacement: string, options: FindOptions): boolean
+  /** 一致するセルをすべて置き換え、置き換えた数を返す（undo 1 回で戻る） */
+  replaceAll(query: string, replacement: string, options: FindOptions): number
 
   undo(): void
   redo(): void
@@ -258,20 +320,42 @@ export type Store = State & Actions
 
 /** 入力文字列をセルの内容に変換する */
 export function parseInput(text: string): CellData | null {
-  if (text === '') return null
-  if (text.startsWith('=')) return { f: text }
-  const trimmed = text.trim()
-  if (/^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
-    const n = Number(trimmed)
-    if (Number.isFinite(n)) return { v: n }
+  return parseTypedInput(text).data
+}
+
+/**
+ * 入力文字列をセルへ書き込む（モデルとエンジンの両方）。
+ * - 日付や桁区切りは数値にし、セルに表示形式が無ければそれらしい形式を付ける
+ * - 文字列（@）形式のセルは、数字を打っても文字列のまま持つ
+ * - 改行を含む入力は「折り返して全体を表示」にし、行の高さを足りる分まで広げる（Excel と同じ）
+ */
+function writeInput(
+  sheet: SheetModel,
+  engine: Engine,
+  sheetId: string,
+  addr: Addr,
+  text: string,
+): void {
+  const key = addrToA1(addr)
+  const style = sheet.styles[key]
+  const parsed =
+    isTextFormat(style?.numFmt) && text !== ''
+      ? { data: { v: text } as CellData, numFmt: undefined }
+      : parseTypedInput(text)
+  const data = parsed.data
+  if (data === null) delete sheet.cells[key]
+  else sheet.cells[key] = data
+  engine.setContent(sheetId, addr, data === null ? null : (data.f ?? data.v ?? null))
+
+  const next: CellStyle = { ...style }
+  if (parsed.numFmt && (!style?.numFmt || style.numFmt === 'General')) next.numFmt = parsed.numFmt
+  if (text.includes('\n') && !style?.wrap) {
+    next.wrap = true
+    const lines = text.split('\n').length
+    const need = rowHeightFor(lines, fontPx(style?.fontSize))
+    if ((sheet.rowHeights[addr.row] ?? DEFAULT_ROW_HEIGHT) < need) sheet.rowHeights[addr.row] = need
   }
-  if (/^-?(\d+\.?\d*)%$/.test(trimmed)) {
-    const n = Number(trimmed.slice(0, -1)) / 100
-    if (Number.isFinite(n)) return { v: n }
-  }
-  if (trimmed === 'TRUE') return { v: true }
-  if (trimmed === 'FALSE') return { v: false }
-  return { v: text }
+  if (!isEmptyStyle(next)) sheet.styles[key] = next
 }
 
 function cloneModel(model: WorkbookModel): WorkbookModel {
@@ -400,6 +484,44 @@ function syncCellsFromEngine(sheet: SheetModel, engine: Engine): void {
   sheet.cells = cells
 }
 
+/** 行・列の挿入削除に合わせて、非表示の行（列）番号をずらす */
+function shiftIndexList(
+  list: number[] | undefined,
+  index: number,
+  delta: number,
+): number[] | undefined {
+  if (!list || list.length === 0) return list
+  const out: number[] = []
+  for (const i of list) {
+    if (i < index) out.push(i)
+    else if (delta < 0 && i < index - delta) continue
+    else out.push(i + delta)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/** 非表示の行（列）を飛ばして、from から step 方向へ進んだ先。端で止まる */
+function stepVisible(
+  from: number,
+  step: number,
+  count: number,
+  hidden: number[] | undefined,
+): number {
+  const set = new Set(hidden ?? [])
+  let at = from
+  const direction = Math.sign(step)
+  if (direction === 0) return at
+  let remaining = Math.abs(step)
+  while (remaining > 0) {
+    let next = at + direction
+    while (next >= 0 && next < count && set.has(next)) next += direction
+    if (next < 0 || next >= count) break
+    at = next
+    remaining--
+  }
+  return at
+}
+
 function uniqueSheetName(model: WorkbookModel, base: string): string {
   const taken = new Set(model.sheets.map((s) => s.name))
   if (!taken.has(base)) return base
@@ -479,6 +601,7 @@ export const useStore = create<Store>((set, get) => {
     autoSaveState: 'idle',
     fileOrigin: 'new',
     clipboard: null,
+    formatPainter: null,
     filePath: null,
     fileName: '新しいブック',
     dirty: false,
@@ -500,7 +623,15 @@ export const useStore = create<Store>((set, get) => {
     displayText: (addr) => {
       const state = get()
       const style = state.styleAt(addr)
-      return formatCellValue(state.displayValue(addr), style?.numFmt)
+      return formatCell(state.displayValue(addr), style?.numFmt).text
+    },
+
+    displayColor: (addr) => {
+      const state = get()
+      const numFmt = state.styleAt(addr)?.numFmt
+      // 色の指定は [ を含むコードにしか無いので、ふつうのセルでは整形し直さない
+      if (!numFmt || !numFmt.includes('[')) return undefined
+      return formatCell(state.displayValue(addr), numFmt).color
     },
 
     inputText: (addr) => get().engine.getSerialized(get().model.activeSheetId, addr),
@@ -516,17 +647,19 @@ export const useStore = create<Store>((set, get) => {
     moveSelection: (dRow, dCol, extend) => {
       const { selection } = get()
       const sheet = get().activeSheet()
+      // 非表示の行・列は飛ばして進む（Excel と同じ）
+      const move = (from: Addr): Addr =>
+        clampAddr(
+          {
+            row: stepVisible(from.row, dRow, sheet.rowCount, sheet.hiddenRows),
+            col: stepVisible(from.col, dCol, sheet.colCount, sheet.hiddenCols),
+          },
+          sheet,
+        )
       if (extend) {
-        const focus = clampAddr(
-          { row: selection.focus.row + dRow, col: selection.focus.col + dCol },
-          sheet,
-        )
-        set({ selection: { anchor: selection.anchor, focus } })
+        set({ selection: { anchor: selection.anchor, focus: move(selection.focus) } })
       } else {
-        const next = clampAddr(
-          { row: selection.anchor.row + dRow, col: selection.anchor.col + dCol },
-          sheet,
-        )
+        const next = move(selection.anchor)
         set({ selection: { anchor: next, focus: next } })
       }
     },
@@ -781,15 +914,7 @@ export const useStore = create<Store>((set, get) => {
     setCellInput: (addr, text) => {
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
-        const key = addrToA1(addr)
-        const data = parseInput(text)
-        if (data === null) delete sheet.cells[key]
-        else sheet.cells[key] = data
-        engine.setContent(
-          model.activeSheetId,
-          addr,
-          data === null ? null : (data.f ?? data.v ?? null),
-        )
+        writeInput(sheet, engine, model.activeSheetId, addr, text)
       })
     },
 
@@ -863,7 +988,98 @@ export const useStore = create<Store>((set, get) => {
           if (isEmptyStyle(next)) delete sheet.styles[key]
           else sheet.styles[key] = next
         }
+        // 文字を大きくしたら、Excel と同じく行の高さを足りる分まで広げる
+        if (patch.fontSize !== undefined) {
+          const need = rowHeightFor(1, fontPx(patch.fontSize))
+          for (let r = range.r0; r <= range.r1; r++) {
+            if ((sheet.rowHeights[r] ?? DEFAULT_ROW_HEIGHT) < need) sheet.rowHeights[r] = need
+          }
+        }
       })
+    },
+
+    adjustDecimals: (delta) => {
+      const state = get()
+      const anchor = state.selection.anchor
+      const value = state.displayValue(anchor)
+      // Excel と同じく、アクティブセルの形式から決めた形式を範囲全体にそろえる
+      const next = adjustDecimalsOf(
+        state.styleAt(anchor)?.numFmt,
+        delta,
+        typeof value === 'number' ? value : null,
+      )
+      state.applyStyle({ numFmt: next === 'General' ? undefined : next })
+    },
+
+    startFormatPainter: (sticky) => {
+      const state = get()
+      const range = state.selectionRange()
+      const sheet = state.activeSheet()
+      const styles: Array<Array<CellStyle | undefined>> = []
+      for (let r = range.r0; r <= range.r1; r++) {
+        const row: Array<CellStyle | undefined> = []
+        for (let c = range.c0; c <= range.c1; c++) {
+          const style = sheet.styles[addrToA1({ row: r, col: c })]
+          row.push(style ? structuredClone(style) : undefined)
+        }
+        styles.push(row)
+      }
+      set({
+        formatPainter: { styles, rows: rangeRows(range), cols: rangeCols(range), sticky },
+        statusMessage: sticky
+          ? '書式を塗る範囲を選んでください（Esc で終了）'
+          : '書式を貼り付ける範囲を選んでください',
+      })
+    },
+
+    applyFormatPainter: (range) => {
+      const painter = get().formatPainter
+      if (!painter) return
+      // 1 セルだけ選んだら、写し取った大きさで塗る（Excel と同じ）
+      const single = range.r0 === range.r1 && range.c0 === range.c1
+      const target: Range = single
+        ? {
+            r0: range.r0,
+            c0: range.c0,
+            r1: range.r0 + painter.rows - 1,
+            c1: range.c0 + painter.cols - 1,
+          }
+        : range
+      mutate((model) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        growSheet(sheet, target.r1, target.c1)
+        for (const addr of iterRange(target)) {
+          const style =
+            painter.styles[(addr.row - target.r0) % painter.rows][
+              (addr.col - target.c0) % painter.cols
+            ]
+          const key = addrToA1(addr)
+          if (style) sheet.styles[key] = structuredClone(style)
+          else delete sheet.styles[key]
+        }
+      })
+      set({
+        formatPainter: painter.sticky ? painter : null,
+        selection: {
+          anchor: { row: target.r0, col: target.c0 },
+          focus: { row: target.r1, col: target.c1 },
+        },
+        statusMessage: painter.sticky ? get().statusMessage : '',
+      })
+    },
+
+    cancelFormatPainter: () => {
+      if (get().formatPainter) set({ formatPainter: null, statusMessage: '' })
+    },
+
+    setRowHeights: (heights, record = true) => {
+      const entries = Object.entries(heights)
+      if (entries.length === 0) return
+      mutate((model) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        for (const [row, px] of entries)
+          sheet.rowHeights[Number(row)] = Math.max(14, Math.round(px))
+      }, record)
     },
 
     setColWidth: (col, px, record = true) => {
@@ -903,6 +1119,8 @@ export const useStore = create<Store>((set, get) => {
         sheet.merges = shiftMerges(sheet.merges, 'row', index, +amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'row', index, amount)
         sheet.rowHeights = shiftIndexRecord(sheet.rowHeights, index, amount)
+        sheet.hiddenRows = shiftIndexList(sheet.hiddenRows, index, amount)
+        if (!sheet.hiddenRows) delete sheet.hiddenRows
         sheet.rowCount += amount
         syncCellsFromEngine(sheet, engine)
       })
@@ -915,6 +1133,8 @@ export const useStore = create<Store>((set, get) => {
         sheet.merges = shiftMerges(sheet.merges, 'row', index, -amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'row', index, -amount)
         sheet.rowHeights = shiftIndexRecord(sheet.rowHeights, index, -amount)
+        sheet.hiddenRows = shiftIndexList(sheet.hiddenRows, index, -amount)
+        if (!sheet.hiddenRows) delete sheet.hiddenRows
         sheet.rowCount = Math.max(1, sheet.rowCount - amount)
         syncCellsFromEngine(sheet, engine)
       })
@@ -927,6 +1147,8 @@ export const useStore = create<Store>((set, get) => {
         sheet.merges = shiftMerges(sheet.merges, 'col', index, +amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'col', index, amount)
         sheet.colWidths = shiftIndexRecord(sheet.colWidths, index, amount)
+        sheet.hiddenCols = shiftIndexList(sheet.hiddenCols, index, amount)
+        if (!sheet.hiddenCols) delete sheet.hiddenCols
         sheet.colCount += amount
         syncCellsFromEngine(sheet, engine)
       })
@@ -939,6 +1161,8 @@ export const useStore = create<Store>((set, get) => {
         sheet.merges = shiftMerges(sheet.merges, 'col', index, -amount)
         sheet.styles = shiftKeyedRecord(sheet.styles, 'col', index, -amount)
         sheet.colWidths = shiftIndexRecord(sheet.colWidths, index, -amount)
+        sheet.hiddenCols = shiftIndexList(sheet.hiddenCols, index, -amount)
+        if (!sheet.hiddenCols) delete sheet.hiddenCols
         sheet.colCount = Math.max(1, sheet.colCount - amount)
         syncCellsFromEngine(sheet, engine)
       })
@@ -1340,6 +1564,7 @@ export const useStore = create<Store>((set, get) => {
 
       const cells: Array<Array<CellData | null>> = []
       const styles: Array<Array<CellStyle | undefined>> = []
+      const values = state.engine.getRangeValues(state.model.activeSheetId, range)
       const tsvRows: string[][] = []
       for (let r = 0; r < rangeRows(range); r++) {
         const cellRow: Array<CellData | null> = []
@@ -1363,6 +1588,7 @@ export const useStore = create<Store>((set, get) => {
       set({
         clipboard: {
           cells,
+          values,
           styles,
           rows: rangeRows(range),
           cols: rangeCols(range),
@@ -1380,7 +1606,7 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
-    paste: (externalText) => {
+    paste: (externalText, mode = 'all') => {
       const state = get()
       const clip = state.clipboard
       const target = state.selectionRange()
@@ -1391,28 +1617,24 @@ export const useStore = create<Store>((set, get) => {
         externalText !== undefined && externalText !== '' && (!clip || externalText !== clip.tsv)
 
       if (useExternal) {
+        if (mode === 'formats') return // 外から来た文字列には書式が無い
         const rows = parseCsv(externalText, '\t')
         if (rows.length === 0) return
         mutate((model, engine) => {
           const sheet = findSheet(model, model.activeSheetId)
-          const block: Array<Array<string | number | boolean | null>> = []
-          rows.forEach((row, r) => {
-            const out: Array<string | number | boolean | null> = []
-            row.forEach((text, c) => {
-              const data = parseInput(text)
-              const key = addrToA1({ row: topLeft.row + r, col: topLeft.col + c })
-              if (data === null) delete sheet.cells[key]
-              else sheet.cells[key] = data
-              out.push(data === null ? null : (data.f ?? data.v ?? null))
-            })
-            block.push(out)
-          })
           growSheet(
             sheet,
             topLeft.row + rows.length - 1,
             topLeft.col + Math.max(...rows.map((r) => r.length)) - 1,
           )
-          engine.setBlock(model.activeSheetId, topLeft, block)
+          engine.batch(() => {
+            rows.forEach((row, r) => {
+              row.forEach((text, c) => {
+                const addr = { row: topLeft.row + r, col: topLeft.col + c }
+                writeInput(sheet, engine, model.activeSheetId, addr, text)
+              })
+            })
+          })
         })
         set({
           selection: {
@@ -1427,9 +1649,15 @@ export const useStore = create<Store>((set, get) => {
       }
 
       if (!clip) return
-      // 貼り付け先とコピー元のずれ。切り取りのときは Excel と同じく参照をずらさない
-      const dRow = clip.cut ? 0 : topLeft.row - clip.origin.range.r0
-      const dCol = clip.cut ? 0 : topLeft.col - clip.origin.range.c0
+      if (clip.cut && mode !== 'all') {
+        set({ statusMessage: '切り取ったセルには「形式を選択して貼り付け」は使えません' })
+        return
+      }
+      const transpose = mode === 'transpose'
+      const outRows = transpose ? clip.cols : clip.rows
+      const outCols = transpose ? clip.rows : clip.cols
+      const writesContent = mode !== 'formats'
+      const writesStyle = mode === 'all' || mode === 'formats' || mode === 'transpose'
 
       mutate((model, engine) => {
         const sheet = findSheet(model, model.activeSheetId)
@@ -1454,40 +1682,265 @@ export const useStore = create<Store>((set, get) => {
           }
         }
 
-        const block: Array<Array<string | number | boolean | null>> = []
+        const block: Array<Array<string | number | boolean | null>> = Array.from(
+          { length: outRows },
+          () => new Array(outCols).fill(null),
+        )
         for (let r = 0; r < clip.rows; r++) {
-          const out: Array<string | number | boolean | null> = []
           for (let c = 0; c < clip.cols; c++) {
-            const src = clip.cells[r][c]
-            const key = addrToA1({ row: topLeft.row + r, col: topLeft.col + c })
-            if (src === null) {
-              delete sheet.cells[key]
-              out.push(null)
-            } else if (src.f !== undefined) {
-              const shifted = adjustFormula(src.f, dRow, dCol)
-              sheet.cells[key] = { f: shifted }
-              out.push(shifted)
-            } else {
-              sheet.cells[key] = { v: src.v as string | number | boolean }
-              out.push(src.v ?? null)
+            const to = transpose
+              ? { row: topLeft.row + c, col: topLeft.col + r }
+              : { row: topLeft.row + r, col: topLeft.col + c }
+            const key = addrToA1(to)
+            if (writesContent) {
+              const src = clip.cells[r][c]
+              let out: string | number | boolean | null = null
+              if (mode === 'values') {
+                const value = clip.values[r]?.[c] ?? null
+                out = value === '' ? null : value
+              } else if (src?.f !== undefined) {
+                // 切り取りのときは Excel と同じく参照をずらさない
+                out = clip.cut
+                  ? src.f
+                  : adjustFormula(
+                      src.f,
+                      to.row - (clip.origin.range.r0 + r),
+                      to.col - (clip.origin.range.c0 + c),
+                    )
+              } else if (src) {
+                out = src.v ?? null
+              }
+              if (out === null) delete sheet.cells[key]
+              else if (typeof out === 'string' && out.startsWith('=') && mode !== 'values') {
+                sheet.cells[key] = { f: out }
+              } else sheet.cells[key] = { v: out }
+              block[to.row - topLeft.row][to.col - topLeft.col] = out
             }
-            const style = clip.styles[r][c]
-            if (style) sheet.styles[key] = structuredClone(style)
-            else delete sheet.styles[key]
+            if (writesStyle) {
+              const style = clip.styles[r][c]
+              if (style) sheet.styles[key] = structuredClone(style)
+              else delete sheet.styles[key]
+            }
           }
-          block.push(out)
         }
-        growSheet(sheet, topLeft.row + clip.rows - 1, topLeft.col + clip.cols - 1)
-        engine.setBlock(model.activeSheetId, topLeft, block)
+        growSheet(sheet, topLeft.row + outRows - 1, topLeft.col + outCols - 1)
+        if (writesContent) engine.setBlock(model.activeSheetId, topLeft, block)
       })
 
       set({
         clipboard: clip.cut ? null : clip,
         selection: {
           anchor: topLeft,
-          focus: { row: topLeft.row + clip.rows - 1, col: topLeft.col + clip.cols - 1 },
+          focus: { row: topLeft.row + outRows - 1, col: topLeft.col + outCols - 1 },
         },
       })
+    },
+
+    fillDirection: (direction) => {
+      if (get().editing) get().commitEdit()
+      const state = get()
+      let range = state.selectionRange()
+      const down = direction === 'down'
+      // 1 行（1 列）だけ選んでいるときは、上（左）のセルを写す（Excel と同じ）
+      if (down && range.r0 === range.r1) {
+        if (range.r0 === 0) return
+        range = { ...range, r0: range.r0 - 1 }
+      } else if (!down && range.c0 === range.c1) {
+        if (range.c0 === 0) return
+        range = { ...range, c0: range.c0 - 1 }
+      }
+      mutate((model, engine) => {
+        const sheet = findSheet(model, model.activeSheetId)
+        const block: Array<Array<string | number | boolean | null>> = []
+        for (let r = range.r0; r <= range.r1; r++) {
+          const out: Array<string | number | boolean | null> = []
+          for (let c = range.c0; c <= range.c1; c++) {
+            const src = down ? { row: range.r0, col: c } : { row: r, col: range.c0 }
+            const srcKey = addrToA1(src)
+            const key = addrToA1({ row: r, col: c })
+            const data = sheet.cells[srcKey]
+            let raw: string | number | boolean | null = null
+            if (data?.f !== undefined) raw = adjustFormula(data.f, r - src.row, c - src.col)
+            else if (data) raw = data.v ?? null
+            if (raw === null) delete sheet.cells[key]
+            else if (data?.f !== undefined) sheet.cells[key] = { f: raw as string }
+            else sheet.cells[key] = { v: raw }
+            const style = sheet.styles[srcKey]
+            if (style) sheet.styles[key] = structuredClone(style)
+            else delete sheet.styles[key]
+            out.push(raw)
+          }
+          block.push(out)
+        }
+        engine.setBlock(model.activeSheetId, { row: range.r0, col: range.c0 }, block)
+      })
+    },
+
+    hideRows: (r0, r1) => {
+      const sheet = get().activeSheet()
+      const hidden = new Set(sheet.hiddenRows ?? [])
+      for (let r = r0; r <= r1; r++) hidden.add(r)
+      if (hidden.size >= sheet.rowCount) {
+        set({ statusMessage: 'すべての行を非表示にすることはできません' })
+        return
+      }
+      mutate((model) => {
+        findSheet(model, model.activeSheetId).hiddenRows = [...hidden].sort((a, b) => a - b)
+      })
+      // 選択を見えている行へ移す
+      const next = stepVisible(r1, 1, sheet.rowCount, [...hidden])
+      const row = hidden.has(next) ? stepVisible(r0, -1, sheet.rowCount, [...hidden]) : next
+      get().setSelection({ row, col: get().selection.anchor.col })
+    },
+
+    unhideRows: (r0, r1) => {
+      const sheet = get().activeSheet()
+      const list = sheet.hiddenRows ?? []
+      // 1 行だけ選んでいるときは、その上下の隠れた行も戻す（境目を選んで再表示する操作）
+      const from = r0 === r1 ? r0 - 1 : r0
+      const to = r0 === r1 ? r1 + 1 : r1
+      const rest = list.filter((r) => r < from || r > to)
+      if (rest.length === list.length) return
+      mutate((model) => {
+        const target = findSheet(model, model.activeSheetId)
+        if (rest.length > 0) target.hiddenRows = rest
+        else delete target.hiddenRows
+      })
+    },
+
+    hideCols: (c0, c1) => {
+      const sheet = get().activeSheet()
+      const hidden = new Set(sheet.hiddenCols ?? [])
+      for (let c = c0; c <= c1; c++) hidden.add(c)
+      if (hidden.size >= sheet.colCount) {
+        set({ statusMessage: 'すべての列を非表示にすることはできません' })
+        return
+      }
+      mutate((model) => {
+        findSheet(model, model.activeSheetId).hiddenCols = [...hidden].sort((a, b) => a - b)
+      })
+      const next = stepVisible(c1, 1, sheet.colCount, [...hidden])
+      const col = hidden.has(next) ? stepVisible(c0, -1, sheet.colCount, [...hidden]) : next
+      get().setSelection({ row: get().selection.anchor.row, col })
+    },
+
+    unhideCols: (c0, c1) => {
+      const sheet = get().activeSheet()
+      const list = sheet.hiddenCols ?? []
+      const from = c0 === c1 ? c0 - 1 : c0
+      const to = c0 === c1 ? c1 + 1 : c1
+      const rest = list.filter((c) => c < from || c > to)
+      if (rest.length === list.length) return
+      mutate((model) => {
+        const target = findSheet(model, model.activeSheetId)
+        if (rest.length > 0) target.hiddenCols = rest
+        else delete target.hiddenCols
+      })
+    },
+
+    find: (query, options, backwards = false) => {
+      if (get().editing) get().commitEdit()
+      const state = get()
+      const sheets =
+        options.scope === 'book'
+          ? state.model.sheets.filter((s) => !s.hidden)
+          : [state.activeSheet()]
+      const activeIndex = Math.max(
+        0,
+        sheets.findIndex((s) => s.id === state.model.activeSheetId),
+      )
+      const textOf = (sheet: SheetModel, addr: Addr): string =>
+        options.lookIn === 'formulas'
+          ? state.engine.getSerialized(sheet.id, addr)
+          : formatCell(state.engine.getValue(sheet.id, addr), sheet.styles[addrToA1(addr)]?.numFmt)
+              .text
+      const cellsOf = (sheet: SheetModel): Addr[] =>
+        Object.keys(sheet.cells)
+          .map((key) => a1ToAddr(key))
+          .filter((a): a is Addr => a !== null)
+
+      // 今のシートの今のセルの次から、ほかのシートを順に回って、今のシートの前半で終わる
+      const anchor = state.selection.anchor
+      const order: Array<{ sheet: SheetModel; addr: Addr }> = []
+      const current = sheets[activeIndex]
+      const currentOrder = searchOrder(cellsOf(current), anchor, backwards)
+      const isAfter = (a: Addr) =>
+        backwards
+          ? a.row < anchor.row || (a.row === anchor.row && a.col < anchor.col)
+          : a.row > anchor.row || (a.row === anchor.row && a.col > anchor.col)
+      const first = currentOrder.filter(isAfter)
+      const last = currentOrder.filter((a) => !isAfter(a))
+      order.push(...first.map((addr) => ({ sheet: current, addr })))
+      for (let k = 1; k < sheets.length; k++) {
+        const index = (activeIndex + (backwards ? -k : k) + sheets.length) % sheets.length
+        const sheet = sheets[index]
+        const cells = searchOrder(cellsOf(sheet), { row: -1, col: -1 })
+        order.push(...(backwards ? cells.reverse() : cells).map((addr) => ({ sheet, addr })))
+      }
+      order.push(...last.map((addr) => ({ sheet: current, addr })))
+
+      const hit = order.find(({ sheet, addr }) => matchesText(textOf(sheet, addr), query, options))
+      if (!hit) {
+        set({ statusMessage: `「${query}」は見つかりませんでした` })
+        return false
+      }
+      if (hit.sheet.id !== state.model.activeSheetId) get().setActiveSheet(hit.sheet.id)
+      set({ selection: { anchor: hit.addr, focus: hit.addr }, statusMessage: '' })
+      return true
+    },
+
+    replaceNext: (query, replacement, options) => {
+      const state = get()
+      const addr = state.selection.anchor
+      const input = state.inputText(addr)
+      // 置換は入力内容（数式）に対して行う（Excel と同じ）
+      const replaceOptions = { ...options, lookIn: 'formulas' as const }
+      if (matchesText(input, query, replaceOptions)) {
+        const next = replaceText(input, query, replacement, replaceOptions)
+        state.setCellInput(addr, next)
+      }
+      return get().find(query, replaceOptions)
+    },
+
+    replaceAll: (query, replacement, options) => {
+      if (get().editing) get().commitEdit()
+      const state = get()
+      const targets =
+        options.scope === 'book'
+          ? state.model.sheets.filter((s) => !s.hidden).map((s) => s.id)
+          : [state.model.activeSheetId]
+      let count = 0
+      const changes: Array<{ sheetId: string; addr: Addr; text: string }> = []
+      for (const sheetId of targets) {
+        const sheet = findSheet(state.model, sheetId)
+        for (const key of Object.keys(sheet.cells)) {
+          const addr = a1ToAddr(key)
+          if (!addr) continue
+          const input = state.engine.getSerialized(sheetId, addr)
+          if (!matchesText(input, query, options)) continue
+          changes.push({ sheetId, addr, text: replaceText(input, query, replacement, options) })
+          count++
+        }
+      }
+      if (count === 0) {
+        set({ statusMessage: `「${query}」は見つかりませんでした` })
+        return 0
+      }
+      mutate((model, engine) => {
+        engine.batch(() => {
+          for (const change of changes) {
+            writeInput(
+              findSheet(model, change.sheetId),
+              engine,
+              change.sheetId,
+              change.addr,
+              change.text,
+            )
+          }
+        })
+      })
+      set({ statusMessage: `${count} 件を置換しました` })
+      return count
     },
 
     undo: () => {
