@@ -496,7 +496,7 @@ body,
 /* ---------- 検索と置換 ---------- */
 .find-dialog {
   position: fixed;
-  top: 132px;
+  top: 160px;
   right: 16px;
   z-index: 30;
   display: flex;
@@ -658,10 +658,123 @@ body,
 }
 
 .formula-bar .fx {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
   color: var(--muted);
   font-style: italic;
   font-weight: 600;
   font-family: Georgia, serif;
+  cursor: pointer;
+}
+
+.formula-bar .fx:hover {
+  background: var(--green-soft);
+  border-color: var(--green-soft-2);
+  color: var(--green-dark);
+}
+
+.toolbar .fx-label {
+  font-family: Georgia, serif;
+  font-weight: 600;
+}
+
+/* ---------- 数式の入力補助（関数の候補と引数のヒント） ---------- */
+.formula-assist,
+.formula-hint {
+  position: absolute;
+  z-index: 8;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+
+.formula-assist {
+  width: 260px;
+}
+
+.formula-assist ul {
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+}
+
+.formula-assist li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.formula-assist li.selected {
+  background: var(--green-soft-2);
+}
+
+.formula-assist .fn-icon {
+  color: var(--green-dark);
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 11px;
+}
+
+.formula-assist .fn-description {
+  margin: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.formula-assist .fn-tip {
+  margin: 0;
+  padding: 0 8px 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.formula-hint {
+  padding: 3px 8px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.formula-hint b {
+  color: var(--text);
+}
+
+.formula-hint .current {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.function-list {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.function-detail b {
+  font-size: 13px;
+}
+
+.function-detail p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.dialog-input {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  font: inherit;
 }
 
 .formula-input {
@@ -1479,7 +1592,8 @@ body,
   .toolbar select,
   .toolbar input,
   .find-field input,
-  .find-options select {
+  .find-options select,
+  .dialog-input {
     font-size: 16px;
   }
 

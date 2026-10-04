@@ -1,8 +1,17 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Addr } from '@shared/a1'
 import { cycleAbsolute, isFormula } from '@shared/formulaRefs'
+import {
+  activeCall,
+  applySuggestion,
+  functionInfo,
+  functionPrefixAt,
+  suggestFunctions,
+} from '@shared/functions'
+import { functionNames } from '../engine/hf'
 import { pointingText, useStore, type Editing } from '../store/workbookStore'
 import { isTouchDevice } from '../device'
+import { ArgumentHint, FunctionList } from './FormulaAssist'
 
 type Props = {
   editing: Editing
@@ -29,6 +38,33 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
   const ref = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
   const pointing = useStore((s) => s.pointing)
+  // 数式の入力補助のためのキャレット位置と、候補の選択・Esc で閉じたか
+  const [caret, setCaret] = useState(0)
+  const [picked, setPicked] = useState(0)
+  const [dismissed, setDismissed] = useState(false)
+  const syncCaret = () => setCaret(ref.current?.selectionStart ?? 0)
+
+  // 打ちかけの関数名の候補（参照選択中は出さない）
+  const assistText = editing && !pointing && isFormula(editing.text) ? editing.text : null
+  const prefix = assistText ? functionPrefixAt(assistText, caret) : null
+  const suggestions = prefix ? suggestFunctions(prefix.prefix, functionNames()) : []
+  const listOpen = suggestions.length > 0 && !dismissed
+  const selected = Math.min(picked, Math.max(0, suggestions.length - 1))
+  // 候補を出していないときは、今いる関数の引数のヒントを出す
+  const call = assistText && !listOpen ? activeCall(assistText, caret) : null
+  const hint = call ? functionInfo(call.name) : undefined
+
+  /** 候補を確定する（名前と "(" を入れて、引数を打つ位置へ） */
+  const accept = (name: string) => {
+    const el = ref.current
+    if (!el || !prefix) return
+    const next = applySuggestion(el.value, prefix.start, caret, name)
+    el.value = next.text
+    el.setSelectionRange(next.caret, next.caret)
+    store().updateEdit(next.text)
+    setCaret(next.caret)
+    setPicked(0)
+  }
 
   // ストア側の内容を入力欄へ反映する（変換中は触らない）
   useEffect(() => {
@@ -82,6 +118,29 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
       return
     }
     if (!editing) return // 編集していないときの移動キーは親が処理する
+
+    // 関数の候補が出ているあいだは、上下で選び Tab で確定、Esc で閉じる（Excel と同じ）
+    if (listOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const step = e.key === 'ArrowDown' ? 1 : -1
+        setPicked((selected + step + suggestions.length) % suggestions.length)
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      if (e.key === 'Tab') {
+        accept(suggestions[selected])
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      if (e.key === 'Escape') {
+        setDismissed(true)
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+    }
 
     // Alt+Enter はセルの中で改行する（Excel と同じ）。確定すると折り返しの書式になる
     if (e.key === 'Enter' && e.altKey) {
@@ -164,47 +223,71 @@ export function CellInput({ editing, left, top, width, height }: Props): React.J
   }
 
   const onInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
+    syncCaret()
+    setDismissed(false)
+    setPicked(0)
     const text = e.currentTarget.value
     if (editing) store().updateEdit(text)
     else store().beginEdit(activeAddr(), text) // 直接入力で編集を開始
   }
 
+  const assistTop = top + height + 2
+  // 右端のセルでも候補が画面の外へはみ出さないように寄せる（候補の幅は 260px）
+  const assistLeft =
+    typeof window === 'undefined' ? left : Math.max(0, Math.min(left, window.innerWidth - 268))
   return (
-    <textarea
-      ref={ref}
-      data-grid-input="true"
-      className={editing ? 'cell-input editing' : 'cell-input'}
-      spellCheck={false}
-      autoComplete="off"
-      onInput={onInput}
-      onKeyDown={onKeyDown}
-      onCompositionStart={() => {
-        composing.current = true
-        // 変換が始まった時点で編集モードへ。textarea 自体は作り直さないので
-        // 変換は途切れない
-        if (!useStore.getState().editing) store().beginEdit(activeAddr(), '')
-      }}
-      onCompositionEnd={(e) => {
-        composing.current = false
-        store().updateEdit(e.currentTarget.value)
-      }}
-      onBlur={(e) => {
-        if (useStore.getState().editing) commit()
-        // フォーカスの行き先が無い（body に落ちた）なら取り戻す。
-        // 他の入力欄やボタンへ移ったときは邪魔しない。
-        // タッチ端末ではキーボードを閉じたいので取り戻さない
-        if (e.relatedTarget === null && !isTouchDevice()) {
-          const el = e.currentTarget
-          setTimeout(() => {
-            if (document.activeElement === document.body) el.focus()
-          }, 0)
+    <>
+      <textarea
+        ref={ref}
+        data-grid-input="true"
+        className={editing ? 'cell-input editing' : 'cell-input'}
+        spellCheck={false}
+        autoComplete="off"
+        onInput={onInput}
+        onKeyDown={onKeyDown}
+        onKeyUp={syncCaret}
+        onSelect={syncCaret}
+        onCompositionStart={() => {
+          composing.current = true
+          // 変換が始まった時点で編集モードへ。textarea 自体は作り直さないので
+          // 変換は途切れない
+          if (!useStore.getState().editing) store().beginEdit(activeAddr(), '')
+        }}
+        onCompositionEnd={(e) => {
+          composing.current = false
+          store().updateEdit(e.currentTarget.value)
+        }}
+        onBlur={(e) => {
+          if (useStore.getState().editing) commit()
+          // フォーカスの行き先が無い（body に落ちた）なら取り戻す。
+          // 他の入力欄やボタンへ移ったときは邪魔しない。
+          // タッチ端末ではキーボードを閉じたいので取り戻さない
+          if (e.relatedTarget === null && !isTouchDevice()) {
+            const el = e.currentTarget
+            setTimeout(() => {
+              if (document.activeElement === document.body) el.focus()
+            }, 0)
+          }
+        }}
+        style={
+          editing
+            ? { left, top, minWidth: width, minHeight: height }
+            : { left, top, width: 1, height: 1 }
         }
-      }}
-      style={
-        editing
-          ? { left, top, minWidth: width, minHeight: height }
-          : { left, top, width: 1, height: 1 }
-      }
-    />
+      />
+      {editing && listOpen ? (
+        <FunctionList
+          items={suggestions}
+          selected={selected}
+          left={assistLeft}
+          top={assistTop}
+          onPick={accept}
+          onHover={setPicked}
+        />
+      ) : null}
+      {editing && hint && call ? (
+        <ArgumentHint info={hint} argIndex={call.argIndex} left={assistLeft} top={assistTop} />
+      ) : null}
+    </>
   )
 }

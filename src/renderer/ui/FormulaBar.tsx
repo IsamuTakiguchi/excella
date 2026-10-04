@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { addrToA1, a1ToRange, rangeToA1 } from '@shared/a1'
+import { emitMenu } from '../menuBus'
 import { useStore } from '../store/workbookStore'
 
 /**
@@ -63,7 +64,14 @@ export function FormulaBar(): React.JSX.Element {
         }}
         onBlur={jumpTo}
       />
-      <span className="fx">fx</span>
+      <button
+        className="fx"
+        title="関数の挿入"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => emitMenu('insert-function')}
+      >
+        fx
+      </button>
       <input
         className="formula-input"
         value={value}

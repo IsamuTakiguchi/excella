@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  contentToView,
+  viewToContent,
   autofitWidth,
   AUTOFIT_PADDING,
   borderHit,
@@ -122,5 +124,25 @@ describe('非表示の行・列', () => {
     expect(offsetOf(sizes, 2)).toBe(10)
     expect(indexAt(sizes, 10)).toBe(2)
     expect(indexAt(sizes, 5)).toBe(0)
+  })
+})
+
+describe('回帰: 固定したウィンドウ枠の下をクリックすると 1 つ下のセルが選ばれる', () => {
+  it('固定領域の外はスクロールしていなくても固定の高さを足さない', () => {
+    // 先頭 22px を固定、スクロールなし：画面の 30px はセルの 30px
+    expect(viewToContent(30, 22, 0)).toBe(30)
+    // 100px スクロールすると、固定の直後には 100px の位置が映る
+    expect(viewToContent(22, 22, 100)).toBe(100)
+    expect(viewToContent(30, 22, 100)).toBe(108)
+    // 固定領域の中はスクロールしない
+    expect(viewToContent(10, 22, 100)).toBe(10)
+    // 固定が無ければスクロール量を足すだけ
+    expect(viewToContent(30, 0, 100)).toBe(130)
+  })
+
+  it('contentToView は逆の変換', () => {
+    expect(contentToView(108, 22, 100, false)).toBe(30)
+    expect(contentToView(30, 22, 0, false)).toBe(30)
+    expect(contentToView(10, 22, 100, true)).toBe(10)
   })
 })

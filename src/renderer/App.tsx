@@ -8,6 +8,7 @@ import { SheetCanvas } from './grid/SheetCanvas'
 import { useStore } from './store/workbookStore'
 import { FindDialog, type FindMode } from './ui/FindDialog'
 import { FormulaBar } from './ui/FormulaBar'
+import { FunctionDialog } from './ui/FunctionDialog'
 import { RecoveryBanner } from './ui/RecoveryBanner'
 import { SheetTabs } from './ui/SheetTabs'
 import { StatusBar } from './ui/StatusBar'
@@ -18,6 +19,7 @@ export function App(): React.JSX.Element {
   const showFormulaBar = useStore((s) => s.showFormulaBar)
   // 検索と置換（Ctrl+F / Ctrl+H）。開いていないときは null
   const [findMode, setFindMode] = useState<FindMode | null>(null)
+  const [functionDialog, setFunctionDialog] = useState(false)
   const save = useCallback(async (asNew: boolean) => {
     await saveCurrent(asNew)
   }, [])
@@ -115,6 +117,9 @@ export function App(): React.JSX.Element {
           return
         case 'toggle-freeze':
           store.toggleFreeze()
+          return
+        case 'insert-function':
+          setFunctionDialog(true)
           return
         case 'find':
         case 'replace':
@@ -259,6 +264,7 @@ export function App(): React.JSX.Element {
       <SheetCanvas />
       <SheetTabs />
       <StatusBar />
+      {functionDialog ? <FunctionDialog onClose={() => setFunctionDialog(false)} /> : null}
       {findMode ? (
         <FindDialog mode={findMode} onModeChange={setFindMode} onClose={() => setFindMode(null)} />
       ) : null}

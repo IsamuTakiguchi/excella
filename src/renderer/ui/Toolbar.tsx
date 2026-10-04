@@ -884,6 +884,13 @@ export function Toolbar(): React.JSX.Element {
 
   const functionItems = (
     <>
+      <button
+        className="text-button"
+        title="関数の挿入（一覧から探して入れる）"
+        onClick={() => emitMenu('insert-function')}
+      >
+        <i className="fx-label">fx</i> 関数の挿入
+      </button>
       {AUTO_FUNCTIONS.map(({ fn, label }) => (
         <button
           key={fn}

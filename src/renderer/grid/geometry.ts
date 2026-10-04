@@ -119,3 +119,26 @@ export function autofitWidth(
   }
   return Math.max(min, Math.min(max, Math.ceil(widest + AUTOFIT_PADDING)))
 }
+
+/**
+ * 本体の左上（見出しを除く）からの画面上の距離を、セルの座標系の位置に直す。
+ *
+ * ウィンドウ枠を固定していると、固定領域（先頭から frozen px）はスクロールせず、
+ * その先のペインは「固定領域の直後」から max(scroll, frozen) の位置を映す（painter.ts と同じ）。
+ * 固定が無ければ frozen = 0 で、ふつうに scroll を足すだけになる。
+ */
+export function viewToContent(view: number, frozen: number, scroll: number): number {
+  if (view < frozen) return view
+  return view - frozen + Math.max(scroll, frozen)
+}
+
+/** viewToContent の逆。inFrozen は位置が固定領域の行（列）にあるか */
+export function contentToView(
+  content: number,
+  frozen: number,
+  scroll: number,
+  inFrozen: boolean,
+): number {
+  if (inFrozen) return content
+  return content + frozen - Math.max(scroll, frozen)
+}

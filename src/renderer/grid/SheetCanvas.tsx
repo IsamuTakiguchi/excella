@@ -4,7 +4,17 @@ import { isFormula, parseRefs } from '@shared/formulaRefs'
 import { DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT } from '@shared/model'
 import { useStore } from '../store/workbookStore'
 import { fitColumnWidth, fitRowHeight } from './autofit'
-import { borderHit, buildSizes, headerSize, indexAt, offsetOf, sizeOf, totalSize } from './geometry'
+import {
+  borderHit,
+  buildSizes,
+  contentToView,
+  headerSize,
+  indexAt,
+  offsetOf,
+  sizeOf,
+  totalSize,
+  viewToContent,
+} from './geometry'
 import { FILL_HANDLE_SIZE, paint, REF_COLORS } from './painter'
 import { CellInput } from './CellInput'
 import { isTouchDevice } from '../device'
@@ -285,15 +295,11 @@ export function SheetCanvas(): React.JSX.Element {
       const localY = clientY - rect.top
       const frozenW = offsetOf(cols, Math.min(sheet.frozen?.cols ?? 0, sheet.colCount))
       const frozenH = offsetOf(rows, Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount))
-      const insideFrozenCols = localX - HEADER_W < frozenW
-      const insideFrozenRows = localY - HEADER_H < frozenH
-      const scrollX = insideFrozenCols ? 0 : Math.max(el.scrollLeft, frozenW)
-      const scrollY = insideFrozenRows ? 0 : Math.max(el.scrollTop, frozenH)
       return {
         localX,
         localY,
-        x: localX - HEADER_W + scrollX,
-        y: localY - HEADER_H + scrollY,
+        x: viewToContent(localX - HEADER_W, frozenW, el.scrollLeft),
+        y: viewToContent(localY - HEADER_H, frozenH, el.scrollTop),
       }
     },
     [cols, rows, sheet.frozen, sheet.colCount, sheet.rowCount, HEADER_W, HEADER_H],
@@ -797,6 +803,23 @@ export function SheetCanvas(): React.JSX.Element {
   const totalH = totalSize(rows) + HEADER_H + frozenH
   // 入力欄はアクティブセルの上に置く。IME の変換候補もここに出る
   const inputAddr = editing ? editing.addr : selection.anchor
+  // 固定したウィンドウ枠の外にあるセルは、描画と同じく固定の分だけずらして重ねる
+  const inputLeft =
+    HEADER_W +
+    contentToView(
+      offsetOf(cols, inputAddr.col),
+      frozenW,
+      scroll.x,
+      inputAddr.col < Math.min(sheet.frozen?.cols ?? 0, sheet.colCount),
+    )
+  const inputTop =
+    HEADER_H +
+    contentToView(
+      offsetOf(rows, inputAddr.row),
+      frozenH,
+      scroll.y,
+      inputAddr.row < Math.min(sheet.frozen?.rows ?? 0, sheet.rowCount),
+    )
 
   return (
     // オーバーレイはスクロール内容の外に置く。中に入れると通常フローで
@@ -835,8 +858,8 @@ export function SheetCanvas(): React.JSX.Element {
         ) : null}
         <CellInput
           editing={editing}
-          left={HEADER_W + offsetOf(cols, inputAddr.col) - scroll.x}
-          top={HEADER_H + offsetOf(rows, inputAddr.row) - scroll.y}
+          left={inputLeft}
+          top={inputTop}
           width={sizeOf(cols, inputAddr.col)}
           height={sizeOf(rows, inputAddr.row)}
         />

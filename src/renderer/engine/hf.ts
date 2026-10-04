@@ -244,3 +244,11 @@ function normalize(value: CellValue): DisplayValue {
   if (typeof value === 'object') return String(value)
   return value
 }
+
+let registeredNames: string[] | null = null
+
+/** 数式で使える関数の名前（入力補完の候補） */
+export function functionNames(): string[] {
+  registeredNames ??= HyperFormula.getRegisteredFunctionNames('enGB')
+  return registeredNames
+}

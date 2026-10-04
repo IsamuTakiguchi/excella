@@ -253,6 +253,30 @@ async function main() {
     }
     console.log('[web-smoke] 数式の参照選択（タップ）の検査に通りました')
 
+    // 関数の入力補完：=su と打つと候補が出て、Tab で SUM( が入り、引数のヒントに変わる
+    await page.touchscreen.tap(empty.x, empty.y)
+    await page.waitForTimeout(150)
+    if (!(await page.evaluate(() => Boolean(window.__excellaStore.getState().editing)))) {
+      await page.touchscreen.tap(empty.x, empty.y)
+      await page.waitForTimeout(150)
+    }
+    await page.keyboard.type('=su')
+    await page.waitForTimeout(150)
+    if (!(await page.isVisible('.formula-assist'))) fail('=su と打っても関数の候補が出ない')
+    const first = (await page.textContent('.formula-assist li.selected')) ?? ''
+    if (!first.includes('SUM')) fail(`最初の候補が SUM ではない: ${first}`)
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(150)
+    const completed = await page.evaluate(
+      () => window.__excellaStore.getState().editing?.text ?? null,
+    )
+    if (completed !== '=SUM(') fail(`Tab で関数名が入らない: ${String(completed)}`)
+    const hint = (await page.textContent('.formula-hint')) ?? ''
+    if (!hint.includes('数値1')) fail(`引数のヒントが出ない: ${hint}`)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+    console.log('[web-smoke] 関数の入力補完の検査に通りました')
+
     // 長押しでメニュー
     await longPress(page, cell.x, cell.y)
     await page.waitForTimeout(150)

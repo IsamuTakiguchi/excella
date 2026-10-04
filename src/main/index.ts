@@ -172,7 +172,7 @@ async function runSmoke(win: BrowserWindow): Promise<void> {
     store.setCellInput({ row: 2, col: 6 }, '折り返して全体を表示する長い文章')
     store.setSelection({ row: 2, col: 6 })
     store.applyStyle({ wrap: true, valign: 'top' })
-    store.setRowHeights({ 2: 40 }, false)
+    store.setRowHeights({ 2: 56 }, false)
 
     // 見出し行を 1 行だけ固定し、合計セルを選んだ状態にする
     store.setSelection({ row: 1, col: 0 })
@@ -408,7 +408,8 @@ async function checkPointMode(win: BrowserWindow): Promise<boolean> {
     const point = (await wc.executeJavaScript(`
       (() => {
         const r = document.querySelector('.grid-scroll').getBoundingClientRect()
-        return { x: Math.round(r.left + r.width * 0.4), y: Math.round(r.top + r.height * 0.5) }
+        // 編集する F 列（F10）と重ならない、右寄りのセルを選ぶ
+        return { x: Math.round(r.left + r.width * 0.65), y: Math.round(r.top + r.height * 0.5) }
       })()
     `)) as { x: number; y: number }
     await mouseClick(point.x, point.y)
@@ -417,6 +418,40 @@ async function checkPointMode(win: BrowserWindow): Promise<boolean> {
     const target = (await state(
       `((a) => { let n = a.col, letters = ''; for (;;) { letters = String.fromCharCode(65 + (n % 26)) + letters; n = Math.floor(n / 26) - 1; if (n < 0) break } return letters + (a.row + 1) })(s.selection.anchor)`,
     )) as string
+
+    // 回帰：ウィンドウ枠を固定している（見出し 1 行）とき、クリックしたのと 1 つ下のセルが選ばれていた。
+    // 描画と同じ寸法から、クリックした位置に描かれているセルを求めて比べる（スクロールしていない前提）
+    const drawn = (await wc.executeJavaScript(`(() => {
+      const s = window.__excellaStore.getState()
+      const sheet = s.activeSheet()
+      const r = document.querySelector('.grid-scroll').getBoundingClientRect()
+      const z = s.zoom
+      const find = (pos, sizes, def, count) => {
+        let acc = 0
+        for (let i = 0; i < count; i++) {
+          const w = Math.round((sizes[i] ?? def) * z)
+          if (pos < acc + w) return i
+          acc += w
+        }
+        return count - 1
+      }
+      const col = find(${point.x} - r.left - Math.round(46 * z), sheet.colWidths, 88, sheet.colCount)
+      const row = find(${point.y} - r.top - Math.round(24 * z), sheet.rowHeights, 22, sheet.rowCount)
+      return row + ':' + col
+    })()`)) as string
+    const picked = (await state('s.selection.anchor.row + ":" + s.selection.anchor.col')) as string
+    if (!(await state('Boolean(s.activeSheet().frozen)'))) {
+      console.error(
+        '[smoke] サンプルでウィンドウ枠が固定されていません（検査の前提が崩れています）',
+      )
+      return false
+    }
+    if (drawn !== picked) {
+      console.error(
+        `[smoke] クリックした位置と違うセルが選ばれました: 描画 ${drawn} / 選択 ${picked}`,
+      )
+      return false
+    }
 
     // 空いているセル（F10）を選んでから `=` を打つ
     await wc.executeJavaScript(`window.__excellaStore.getState().setSelection({ row: 9, col: 5 })`)

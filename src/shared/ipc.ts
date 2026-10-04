@@ -18,6 +18,8 @@ export type MenuAction =
   | 'toggle-freeze'
   | 'find'
   | 'replace'
+  /** 関数の挿入（画面上のボタンからだけ届く） */
+  | 'insert-function'
 
 export type OpenResult = {
   path: string
