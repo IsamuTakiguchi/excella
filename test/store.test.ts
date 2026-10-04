@@ -652,3 +652,113 @@ describe('数式の参照選択（ポイントモード）', () => {
     expect(store().editing?.text).toBe('=A1')
   })
 })
+
+describe('シート見出し（Excel のシートタブ）', () => {
+  const names = () => store().model.sheets.map((s) => s.name)
+  const active = () => store().activeSheet().name
+
+  it('指定した位置の前に新しいシートを挿入する', () => {
+    store().addSheet() // Sheet2
+    store().addSheet(0)
+    expect(names()).toEqual(['Sheet3', 'Sheet1', 'Sheet2'])
+    expect(active()).toBe('Sheet3')
+  })
+
+  it('並べ替えられ、undo で戻る', () => {
+    store().addSheet()
+    store().addSheet()
+    const first = store().model.sheets[0].id
+    store().moveSheet(first, 3) // 末尾へ
+    expect(names()).toEqual(['Sheet2', 'Sheet3', 'Sheet1'])
+    store().undo()
+    expect(names()).toEqual(['Sheet1', 'Sheet2', 'Sheet3'])
+  })
+
+  it('コピーすると内容・書式・数式ごと複製され、元とは独立する', () => {
+    setCell('A1', '10')
+    setCell('A2', '=A1*2')
+    store().setSelection({ row: 0, col: 0 })
+    store().applyStyle({ bold: true })
+    const original = store().model.sheets[0].id
+    store().copySheet(original)
+
+    expect(names()).toEqual(['Sheet1', 'Sheet1 (2)'])
+    expect(active()).toBe('Sheet1 (2)')
+    expect(valueOf('A2')).toBe(20)
+    expect(store().styleAt({ row: 0, col: 0 })?.bold).toBe(true)
+
+    // コピー側を変えても元は変わらない
+    setCell('A1', '1')
+    expect(valueOf('A2')).toBe(2)
+    store().setActiveSheet(original)
+    expect(valueOf('A2')).toBe(20)
+  })
+
+  it('見出しの色を付けて外せる', () => {
+    const id = store().model.sheets[0].id
+    store().setSheetTabColor(id, '#C00000')
+    expect(store().model.sheets[0].tabColor).toBe('#C00000')
+    store().setSheetTabColor(id, undefined)
+    expect(store().model.sheets[0].tabColor).toBeUndefined()
+    store().undo()
+    expect(store().model.sheets[0].tabColor).toBe('#C00000')
+  })
+
+  it('非表示にすると隣のシートが開き、再表示するとそのシートが開く', () => {
+    store().addSheet()
+    store().addSheet()
+    const second = store().model.sheets[1].id
+    store().setActiveSheet(second)
+    store().hideSheet(second)
+    expect(store().model.sheets[1].hidden).toBe(true)
+    expect(active()).toBe('Sheet1') // 左隣を優先
+
+    store().unhideSheet(second)
+    expect(store().model.sheets[1].hidden).toBeUndefined()
+    expect(active()).toBe('Sheet2')
+  })
+
+  it('最後の 1 枚は隠せないし、消せない', () => {
+    store().addSheet()
+    const [first, second] = store().model.sheets.map((s) => s.id)
+    store().hideSheet(first)
+    store().hideSheet(second)
+    expect(store().model.sheets.filter((s) => !s.hidden)).toHaveLength(1)
+    store().removeSheet(second)
+    expect(store().model.sheets).toHaveLength(2)
+    expect(store().statusMessage).toContain('削除できません')
+  })
+
+  it('消したシートが開いていたら隣の表示中のシートへ移る', () => {
+    store().addSheet()
+    store().addSheet()
+    const [first, second, third] = store().model.sheets.map((s) => s.id)
+    store().hideSheet(second)
+    store().setActiveSheet(third)
+    store().removeSheet(third)
+    expect(store().model.activeSheetId).toBe(first) // 隠れた Sheet2 は飛ばす
+  })
+
+  it('Ctrl+PageUp / PageDown 相当で、隠れたシートを飛ばして切り替える', () => {
+    store().addSheet()
+    store().addSheet()
+    const [first, second, third] = store().model.sheets.map((s) => s.id)
+    store().hideSheet(second)
+    store().setActiveSheet(first)
+    store().activateAdjacentSheet(1)
+    expect(store().model.activeSheetId).toBe(third)
+    store().activateAdjacentSheet(1) // 端では止まる
+    expect(store().model.activeSheetId).toBe(third)
+    store().activateAdjacentSheet(-1)
+    expect(store().model.activeSheetId).toBe(first)
+  })
+
+  it('Excel で使えない名前には変えられない', () => {
+    const id = store().model.sheets[0].id
+    store().renameSheet(id, '売上/4月')
+    expect(names()).toEqual(['Sheet1'])
+    expect(store().statusMessage).toContain('使えません')
+    store().renameSheet(id, '売上 4月')
+    expect(names()).toEqual(['売上 4月'])
+  })
+})

@@ -28,6 +28,7 @@ import { parseCsv, stringifyCsv } from '@shared/csv'
 import {
   createSheet,
   createWorkbook,
+  newSheetId,
   isEmptyBorders,
   isEmptyStyle,
   type BorderSide,
@@ -41,6 +42,7 @@ import { formatCellValue } from '@shared/numberFormat'
 import { fillSeries } from '@shared/fill'
 import { adjustFormula } from '@shared/refAdjust'
 import { canInsertRef } from '@shared/formulaRefs'
+import { copySheetName, moveTargetIndex, nearestVisibleIndex, sheetNameError } from '@shared/sheets'
 import { defaultZoom } from '../device'
 import { clampZoom } from '../grid/geometry'
 import { bridge } from '../bridge'
@@ -178,10 +180,21 @@ type Actions = {
   /** アクティブセルの左上でウィンドウ枠を固定する。固定済みなら解除する */
   toggleFreeze(): void
 
-  addSheet(): void
+  /** 新しいシートを追加する。before を渡すとその位置の前に入れる（右クリックの「挿入」） */
+  addSheet(before?: number): void
   removeSheet(sheetId: string): void
   renameSheet(sheetId: string, name: string): void
   setActiveSheet(sheetId: string): void
+  /** シートを before の位置の前へ動かす（before は 0〜シート数。シート数なら末尾） */
+  moveSheet(sheetId: string, before: number): void
+  /** シートをコピーして before の位置の前に入れる（省略時は元の直後） */
+  copySheet(sheetId: string, before?: number): void
+  /** シート見出しの色。undefined で色なし */
+  setSheetTabColor(sheetId: string, color: string | undefined): void
+  hideSheet(sheetId: string): void
+  unhideSheet(sheetId: string): void
+  /** 表示中のシートを前後に切り替える（Ctrl+PageUp / PageDown）。端では止まる */
+  activateAdjacentSheet(delta: number): void
 
   copy(cut: boolean): Promise<void>
   paste(externalText?: string): void
@@ -388,6 +401,17 @@ export const useStore = create<Store>((set, get) => {
     })
     markDirty()
   }
+
+  /** シートを切り替えたあとの見え方（選択を左上へ、編集は終わらせる） */
+  const resetView = () =>
+    set({
+      selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } },
+      editing: null,
+      pointing: null,
+    })
+
+  const clampIndex = (index: number, model: WorkbookModel): number =>
+    Math.max(0, Math.min(Math.trunc(index), model.sheets.length))
 
   const clampAddr = (addr: Addr, sheet: SheetModel): Addr => ({
     row: Math.max(0, Math.min(addr.row, sheet.rowCount - 1)),
@@ -985,37 +1009,51 @@ export const useStore = create<Store>((set, get) => {
       })
     },
 
-    addSheet: () => {
-      const newId = createSheet('tmp')
+    addSheet: (before) => {
+      const sheet = createSheet('tmp')
       mutate((model, engine) => {
-        const name = uniqueSheetName(model, `Sheet${model.sheets.length + 1}`)
-        newId.name = name
-        model.sheets.push(newId)
-        model.activeSheetId = newId.id
-        engine.addSheet(newId.id, name)
+        sheet.name = uniqueSheetName(model, `Sheet${model.sheets.length + 1}`)
+        const at = before === undefined ? model.sheets.length : clampIndex(before, model)
+        model.sheets.splice(at, 0, sheet)
+        model.activeSheetId = sheet.id
+        engine.addSheet(sheet.id, sheet.name)
       })
-      set({ selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } } })
+      resetView()
     },
 
     removeSheet: (sheetId) => {
-      if (get().model.sheets.length <= 1) {
-        set({ statusMessage: 'シートは 1 つ以上必要です' })
+      const model = get().model
+      const target = model.sheets.find((s) => s.id === sheetId)
+      if (!target) return
+      if (!target.hidden && model.sheets.filter((s) => !s.hidden).length <= 1) {
+        set({ statusMessage: '表示されているシートは 1 つ以上必要なため削除できません' })
         return
       }
-      mutate((model, engine) => {
-        const index = model.sheets.findIndex((s) => s.id === sheetId)
-        if (index < 0) return
+      const wasActive = model.activeSheetId === sheetId
+      mutate((next, engine) => {
+        const index = next.sheets.findIndex((s) => s.id === sheetId)
         engine.removeSheet(sheetId)
-        model.sheets.splice(index, 1)
-        if (model.activeSheetId === sheetId) {
-          model.activeSheetId = model.sheets[Math.max(0, index - 1)].id
+        if (next.activeSheetId === sheetId) {
+          const replacement = nearestVisibleIndex(
+            next.sheets.map((s) => Boolean(s.hidden)),
+            index,
+          )
+          next.activeSheetId = next.sheets[replacement].id
         }
+        next.sheets.splice(index, 1)
       })
+      if (wasActive) resetView()
     },
 
     renameSheet: (sheetId, name) => {
       const trimmed = name.trim()
-      if (!trimmed) return
+      const current = get().model.sheets.find((s) => s.id === sheetId)
+      if (!current || current.name === trimmed) return
+      const error = sheetNameError(trimmed)
+      if (error) {
+        set({ statusMessage: error })
+        return
+      }
       const model = get().model
       if (model.sheets.some((s) => s.id !== sheetId && s.name === trimmed)) {
         set({ statusMessage: '同じ名前のシートがあります' })
@@ -1038,6 +1076,94 @@ export const useStore = create<Store>((set, get) => {
         pointing: null,
         revision: get().revision + 1,
       })
+    },
+
+    moveSheet: (sheetId, before) => {
+      const model = get().model
+      const from = model.sheets.findIndex((s) => s.id === sheetId)
+      if (from < 0) return
+      const to = moveTargetIndex(from, before, model.sheets.length)
+      if (to === from) return
+      mutate((next) => {
+        const [sheet] = next.sheets.splice(from, 1)
+        next.sheets.splice(to, 0, sheet)
+      })
+    },
+
+    copySheet: (sheetId, before) => {
+      const model = get().model
+      const index = model.sheets.findIndex((s) => s.id === sheetId)
+      if (index < 0) return
+      mutate((next, engine) => {
+        const source = next.sheets[index]
+        const copy: SheetModel = {
+          ...structuredClone(source),
+          id: newSheetId(),
+          name: copySheetName(
+            next.sheets.map((s) => s.name),
+            source.name,
+          ),
+          hidden: undefined,
+        }
+        const at = before === undefined ? index + 1 : clampIndex(before, next)
+        next.sheets.splice(at, 0, copy)
+        next.activeSheetId = copy.id
+        // 数式ごと複製するので、エンジンはモデルから作り直すのが確実
+        engine.rebuild(next)
+      })
+      resetView()
+    },
+
+    setSheetTabColor: (sheetId, color) => {
+      const sheet = get().model.sheets.find((s) => s.id === sheetId)
+      if (!sheet || sheet.tabColor === color) return
+      mutate((next) => {
+        const target = findSheet(next, sheetId)
+        if (color) target.tabColor = color
+        else delete target.tabColor
+      })
+    },
+
+    hideSheet: (sheetId) => {
+      const model = get().model
+      const target = model.sheets.find((s) => s.id === sheetId)
+      if (!target || target.hidden) return
+      if (model.sheets.filter((s) => !s.hidden).length <= 1) {
+        set({ statusMessage: 'すべてのシートを非表示にすることはできません' })
+        return
+      }
+      const wasActive = model.activeSheetId === sheetId
+      mutate((next) => {
+        const index = next.sheets.findIndex((s) => s.id === sheetId)
+        next.sheets[index].hidden = true
+        if (next.activeSheetId === sheetId) {
+          const replacement = nearestVisibleIndex(
+            next.sheets.map((s) => Boolean(s.hidden)),
+            index,
+          )
+          next.activeSheetId = next.sheets[replacement].id
+        }
+      })
+      if (wasActive) resetView()
+    },
+
+    unhideSheet: (sheetId) => {
+      const sheet = get().model.sheets.find((s) => s.id === sheetId)
+      if (!sheet?.hidden) return
+      // Excel と同じく、再表示したシートをそのまま開く
+      mutate((next) => {
+        delete findSheet(next, sheetId).hidden
+        next.activeSheetId = sheetId
+      })
+      resetView()
+    },
+
+    activateAdjacentSheet: (delta) => {
+      const model = get().model
+      const visible = model.sheets.filter((s) => !s.hidden)
+      const current = visible.findIndex((s) => s.id === model.activeSheetId)
+      const target = visible[Math.max(0, Math.min(visible.length - 1, current + delta))]
+      if (target && target.id !== model.activeSheetId) get().setActiveSheet(target.id)
     },
 
     copy: async (cut) => {

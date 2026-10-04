@@ -1,7 +1,16 @@
 import { useEffect, useRef } from 'react'
 
 export type ContextMenuItem =
-  { kind: 'separator' } | { kind: 'item'; label: string; onSelect: () => void; disabled?: boolean }
+  | { kind: 'separator' }
+  | { kind: 'item'; label: string; onSelect: () => void; disabled?: boolean }
+  /** 色見本の行（シート見出しの「タブの色」など）。先頭は「色なし」 */
+  | {
+      kind: 'colors'
+      label: string
+      colors: string[]
+      current?: string
+      onPick: (color: string | undefined) => void
+    }
 
 export type ContextMenuState = {
   x: number
@@ -60,6 +69,32 @@ export function ContextMenu({
       {state.items.map((item, index) =>
         item.kind === 'separator' ? (
           <div key={`sep-${index}`} className="separator" />
+        ) : item.kind === 'colors' ? (
+          <div key={`colors-${index}`} className="menu-colors">
+            <div className="menu-colors-label">{item.label}</div>
+            <div className="menu-colors-row">
+              <button
+                className={`swatch none${item.current ? '' : ' selected'}`}
+                title="色なし"
+                onClick={() => {
+                  item.onPick(undefined)
+                  onClose()
+                }}
+              />
+              {item.colors.map((color) => (
+                <button
+                  key={color}
+                  className={`swatch${item.current === color ? ' selected' : ''}`}
+                  title={color}
+                  style={{ background: color }}
+                  onClick={() => {
+                    item.onPick(color)
+                    onClose()
+                  }}
+                />
+              ))}
+            </div>
+          </div>
         ) : (
           <button
             key={item.label}

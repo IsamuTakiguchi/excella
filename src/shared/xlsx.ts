@@ -206,13 +206,27 @@ export async function workbookFromXlsxBuffer(
       sheet.frozen = { rows: pane.ySplit ?? 0, cols: pane.xSplit ?? 0 }
     }
 
+    // シート見出しの色と非表示（veryHidden は Excel の画面からは戻せないが、ここでは隠すだけ）
+    const tabColor = argbToHex(ws.properties?.tabColor?.argb)
+    if (tabColor) sheet.tabColor = tabColor
+    if (ws.state === 'hidden' || ws.state === 'veryHidden') sheet.hidden = true
+
     sheet.rowCount = Math.max(DEFAULT_ROW_COUNT, maxRow + 20)
     sheet.colCount = Math.max(DEFAULT_COL_COUNT, maxCol + 5)
     sheets.push(sheet)
   })
 
   if (sheets.length === 0) sheets.push(createSheet('Sheet1'))
-  return { version: 1, sheets, activeSheetId: sheets[0].id }
+  // 全シートが隠れているファイルでは何も見えなくなるので、先頭だけは出す
+  if (sheets.every((s) => s.hidden)) delete sheets[0].hidden
+
+  // 保存時に開いていたシートで開く（隠れたシートなら最初の表示中のシート）
+  const activeTab = wb.views?.[0]?.activeTab ?? 0
+  const active =
+    sheets[activeTab] && !sheets[activeTab].hidden
+      ? sheets[activeTab]
+      : (sheets.find((s) => !s.hidden) ?? sheets[0])
+  return { version: 1, sheets, activeSheetId: active.id }
 }
 
 /** シート ID → (A1 → 計算結果) */
@@ -234,6 +248,9 @@ export async function xlsxBufferFromWorkbook(
   for (const sheet of model.sheets) {
     const ws = wb.addWorksheet(sheet.name)
     const sheetResults = results?.get(sheet.id)
+    const tabArgb = hexToArgb(sheet.tabColor)
+    if (tabArgb) ws.properties.tabColor = { argb: tabArgb }
+    if (sheet.hidden) ws.state = 'hidden'
 
     for (const [key, data] of Object.entries(sheet.cells)) {
       const addr = a1ToAddr(key)
@@ -307,6 +324,24 @@ export async function xlsxBufferFromWorkbook(
   }
 
   if (wb.worksheets.length === 0) wb.addWorksheet('Sheet1')
+
+  // 開いていたシートを覚えておく（Excel で開いたときもそのシートが出る）
+  const activeTab = Math.max(
+    0,
+    model.sheets.findIndex((s) => s.id === model.activeSheetId),
+  )
+  wb.views = [
+    {
+      x: 0,
+      y: 0,
+      width: 20000,
+      height: 12000,
+      firstSheet: 0,
+      activeTab,
+      visibility: 'visible',
+    },
+  ]
+
   const out = await wb.xlsx.writeBuffer()
   return out instanceof Uint8Array ? out : new Uint8Array(out as ArrayBuffer)
 }

@@ -70,6 +70,10 @@ export type SheetModel = {
   rowCount: number
   colCount: number
   frozen?: { rows: number; cols: number }
+  /** シート見出しの色（'#RRGGBB'）。Excel の「タブの色」 */
+  tabColor?: string
+  /** 非表示のシート。少なくとも 1 枚は表示されている必要がある */
+  hidden?: boolean
 }
 
 export type WorkbookModel = {

@@ -146,3 +146,31 @@ describe('xlsx のバイト列での往復（ブラウザ版が使う経路）',
     expect(loaded.sheets[0].frozen).toEqual({ rows: 1, cols: 0 })
   })
 })
+
+describe('シート見出しの往復', () => {
+  it('見出しの色・非表示・開いていたシートが保たれる', async () => {
+    const a = createSheet('表示')
+    const b = createSheet('隠し')
+    const c = createSheet('色つき')
+    b.hidden = true
+    c.tabColor = '#00B050'
+    a.cells = { A1: { v: 1 } }
+    const model: WorkbookModel = { version: 1, sheets: [a, b, c], activeSheetId: c.id }
+
+    const loaded = await workbookFromXlsxBuffer(await xlsxBufferFromWorkbook(model))
+    expect(loaded.sheets.map((s) => s.name)).toEqual(['表示', '隠し', '色つき'])
+    expect(loaded.sheets[1].hidden).toBe(true)
+    expect(loaded.sheets[0].hidden).toBeUndefined()
+    expect(loaded.sheets[2].tabColor).toBe('#00B050')
+    expect(loaded.activeSheetId).toBe(loaded.sheets[2].id)
+  })
+
+  it('開いていたシートが隠れていれば、最初の表示中のシートで開く', async () => {
+    const a = createSheet('A')
+    const b = createSheet('B')
+    a.hidden = true
+    const model: WorkbookModel = { version: 1, sheets: [a, b], activeSheetId: a.id }
+    const loaded = await workbookFromXlsxBuffer(await xlsxBufferFromWorkbook(model))
+    expect(loaded.activeSheetId).toBe(loaded.sheets[1].id)
+  })
+})

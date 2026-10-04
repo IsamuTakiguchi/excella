@@ -112,6 +112,23 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey
+      // Excel のシート操作：Ctrl+PageUp / PageDown で前後のシート、Shift+F11 で新しいシート。
+      // セルの編集中やほかの入力欄にいるときは邪魔しない
+      if (!useStore.getState().editing && !isOtherInput(document.activeElement)) {
+        if (mod && (e.key === 'PageUp' || e.key === 'PageDown')) {
+          useStore.getState().activateAdjacentSheet(e.key === 'PageUp' ? -1 : 1)
+          e.preventDefault()
+          return
+        }
+        if (e.shiftKey && e.key === 'F11') {
+          const state = useStore.getState()
+          const index = state.model.sheets.findIndex((s) => s.id === state.model.activeSheetId)
+          // Excel と同じく、開いているシートの前に入れる
+          state.addSheet(Math.max(0, index))
+          e.preventDefault()
+          return
+        }
+      }
       if (!mod) return
       const key = e.key.toLowerCase()
       const store = useStore.getState()
